@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Music2 } from 'lucide-react';
 import type {
   LyricLine,
@@ -8,6 +9,7 @@ import type {
   TrackInfo,
 } from '@shared/types';
 import { findActiveLineIndex } from '@/lib/lrcParser';
+import { computeLetterProgression } from '@/lib/letterTiming';
 
 interface LyricsOverlayProps {
   playback: PlaybackState | null;
@@ -17,13 +19,46 @@ interface LyricsOverlayProps {
   currentMs: number;
   layoutMode: LyricsLayoutMode;
   showCover: boolean;
+  letterSweep: boolean;
   isLoadingLyrics: boolean;
 }
 
-function renderLineWords(line: LyricLine, currentMs: number, isActive: boolean) {
-  if (!isActive || !line.words || line.words.length === 0) {
+function renderActiveLineContent(
+  line: LyricLine,
+  nextLineTimeMs: number | null,
+  trackDurationMs: number,
+  currentMs: number,
+  letterSweep: boolean
+) {
+  if (letterSweep) {
+    const groups = computeLetterProgression(line, nextLineTimeMs, trackDurationMs, currentMs);
+    return groups.map((group, gIdx) => {
+      if (group.isSpace) {
+        return <Fragment key={`sp-${gIdx}`}>{' '.repeat(group.chars.length)}</Fragment>;
+      }
+      return (
+        <span key={`w-${gIdx}`} className="lyric-word-group">
+          {group.chars.map((c, cIdx) => {
+            const style = {
+              '--fill': c.fill.toFixed(3),
+              '--hop': `${c.hopPx.toFixed(2)}px`,
+              '--cscale': c.scale.toFixed(3),
+            } as CSSProperties;
+            return (
+              <span key={`c-${gIdx}-${cIdx}`} className="lyric-char" style={style}>
+                {c.char}
+              </span>
+            );
+          })}
+        </span>
+      );
+    });
+  }
+
+  if (!line.words || line.words.length === 0) {
     return line.text;
   }
+
   return line.words.map((word, idx) => {
     const sung = currentMs >= word.timeMs;
     return (
@@ -74,6 +109,7 @@ export function LyricsOverlay({
   currentMs,
   layoutMode,
   showCover,
+  letterSweep,
   isLoadingLyrics,
 }: LyricsOverlayProps) {
   const lineRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -187,8 +223,17 @@ export function LyricsOverlay({
           {lyricsResult?.status === 'synced' && parsedLines.length > 0 ? (
             <>
               {activeLine && activeLine.text ? (
-                <div key={activeIndex} className="cinema-active">
-                  {renderLineWords(activeLine, currentMs, true)}
+                <div
+                  key={activeIndex}
+                  className={`cinema-active ${letterSweep ? 'is-sweep' : ''}`}
+                >
+                  {renderActiveLineContent(
+                    activeLine,
+                    nextLine ? nextLine.timeMs : null,
+                    track.durationMs,
+                    currentMs,
+                    letterSweep
+                  )}
                 </div>
               ) : (
                 <div className="instrumental-dots" aria-hidden="true">
@@ -245,13 +290,17 @@ export function LyricsOverlay({
               else if (delta === 1 || delta === -1) stateClass = delta < 0 ? 'is-past' : 'is-near';
               else if (Math.abs(delta) === 2) stateClass = 'is-far';
 
+              const isActiveLine = index === activeIndex;
+              const nextLineTimeMs =
+                index + 1 < parsedLines.length ? parsedLines[index + 1].timeMs : null;
+
               return (
                 <div
                   key={`${index}-${line.timeMs}`}
                   ref={(el) => {
                     lineRefs.current[index] = el;
                   }}
-                  className={`lyric-line ${stateClass}`}
+                  className={`lyric-line ${stateClass} ${isActiveLine && letterSweep ? 'is-sweep' : ''}`}
                 >
                   {line.text === '' ? (
                     <span className="instrumental-dots" aria-hidden="true">
@@ -259,8 +308,16 @@ export function LyricsOverlay({
                       <span className="instrumental-dot" />
                       <span className="instrumental-dot" />
                     </span>
+                  ) : isActiveLine ? (
+                    renderActiveLineContent(
+                      line,
+                      nextLineTimeMs,
+                      track.durationMs,
+                      currentMs,
+                      letterSweep
+                    )
                   ) : (
-                    renderLineWords(line, currentMs, index === activeIndex)
+                    line.text
                   )}
                 </div>
               );

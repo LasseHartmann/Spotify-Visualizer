@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AuthState } from '@shared/types';
+import { isWebPlatform } from '@/platform/webBridge';
 
 interface LoginScreenProps {
   auth: AuthState;
@@ -41,6 +42,7 @@ export function LoginScreen({
     }
   }, [auth.clientId, clientIdInput]);
 
+  const isWeb = isWebPlatform();
   const trimmedId = clientIdInput.trim();
   const isValidId = CLIENT_ID_REGEX.test(trimmedId);
   const redirectUri = auth.redirectUri || 'http://127.0.0.1:43821/callback';
@@ -72,9 +74,11 @@ export function LoginScreen({
           >
             {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
-          <button className="hud-btn icon-only danger" onClick={onClose} title="Close">
-            <X size={16} />
-          </button>
+          {!isWeb && (
+            <button className="hud-btn icon-only danger" onClick={onClose} title="Close">
+              <X size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -185,7 +189,7 @@ export function LoginScreen({
           {auth.isAuthenticating ? (
             <>
               <Loader2 size={18} className="spin" />
-              Waiting for Spotify in browser…
+              {isWeb ? 'Redirecting to Spotify…' : 'Waiting for Spotify in browser…'}
             </>
           ) : (
             'Connect with Spotify'
@@ -196,7 +200,7 @@ export function LoginScreen({
 
         <p className="login-footnote">
           Uses secure OAuth PKCE (no Client Secret needed). Your Client ID and session stay stored
-          locally on your PC.
+          locally {isWeb ? 'in this browser' : 'on your PC'}.
         </p>
       </form>
     </div>

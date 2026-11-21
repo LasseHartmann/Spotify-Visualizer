@@ -85,7 +85,7 @@ float fbm(vec2 p) {
   mat2 rot = mat2(0.80, -0.60, 0.60, 0.80);
   for (int i = 0; i < 4; i++) {
     value += amp * noise2d(p);
-    p = rot * p * 2.04 + vec2(11.3, 7.9);
+    p = rot * p * 2.02 + vec2(11.3, 7.9);
     amp *= 0.5;
   }
   return value;
@@ -123,7 +123,6 @@ vec3 mixCoverColor(vec3 a, vec3 b, float t) {
   return hsv2rgb(vec3(h, s, v));
 }
 
-// Subtle shade variation that NEVER injects fake saturation into neutral white/silver!
 vec3 preserveShade(vec3 col, float hueDelta, float valScale) {
   vec3 hsv = rgb2hsv(col);
   if (hsv.y < 0.22) {
@@ -158,12 +157,11 @@ vec3 getAccentColor() {
   return samplePaletteCycle(1.0);
 }
 
-// Hue-preserving soft-knee tonemapper (keeps gold gold, red red, silver silver, black black)
 vec3 finalizeLedColor(vec3 col) {
   col = max(col, vec3(0.0));
   float peak = max(col.r, max(col.g, col.b));
-  if (peak > 0.88) {
-    float compressed = 0.88 + (1.0 - exp(-(peak - 0.88) * 1.6)) * 0.12;
+  if (peak > 0.86) {
+    float compressed = 0.86 + (1.0 - exp(-(peak - 0.86) * 1.5)) * 0.14;
     col *= compressed / peak;
   }
   float dither = (hash21(gl_FragCoord.xy + fract(uTime) * 59.0) - 0.5) / 255.0;
@@ -172,9 +170,9 @@ vec3 finalizeLedColor(vec3 col) {
 `;
 
 /**
- * 1. PULSE WASH — Concert Wall Wash faithful to the album's real colors
- * On black-backed covers (RAM, Sick Boi, B&W), negative space stays true jet black while
- * primary & secondary album colors (e.g. Gold + Silver, or Crimson + White) surge cleanly on beats.
+ * 1. PULSE WASH — Calm, velvety breathing concert wash
+ * Slow silk aurora gliding across the cover's colors, breathing smoothly with bass & vocals
+ * without frantic strobe flashes or aggressive zoom snaps.
  */
 const PULSE_WASH_FRAG = `${COMMON_HEADER}
 void main() {
@@ -185,68 +183,57 @@ void main() {
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.72);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.68);
 
-  float punch = clamp(uPulse, 0.4, 2.0);
-  float kickHit = clamp(uKick * punch, 0.0, 1.15);
-  float snareHit = clamp(uSnare * punch, 0.0, 1.1);
-  float dropLift = uDrop * 0.22;
+  float punch = clamp(uPulse, 0.4, 1.3);
+  float kickBreath = clamp(uKick * punch, 0.0, 0.9);
+  float snareSoft = clamp(uSnare * punch, 0.0, 0.75);
+  float dropLift = uDrop * 0.16;
 
-  vec2 zp = p * (1.0 - kickHit * 0.12 - uSubBass * 0.05);
+  // Gentle, calm breathing zoom
+  vec2 zp = p * (1.0 - kickBreath * 0.035 - uSubBass * 0.02);
 
-  // Flowing silk wave field — tighter contrast on dark-backed covers so true black negative space shines!
-  float t = uFlowTime * 0.34;
-  float n1 = fbm(zp * 1.7 + vec2(t * 0.72, -t * 0.42));
-  float n2 = fbm(zp * 2.5 - vec2(t * 0.52, t * 0.62) + n1 * (1.35 + uBass * 0.85));
-  float silk = pow(smoothstep(mix(0.22, 0.40, uDarkStage), 0.92, n2), mix(1.5, 2.1, uDarkStage));
-  float ridge = pow(clamp(1.0 - abs(n2 * 2.0 - 1.0), 0.0, 1.0), mix(3.2, 4.5, uDarkStage));
+  // Slow, hypnotic silk flow
+  float t = uFlowTime * 0.15;
+  float n1 = fbm(zp * 1.35 + vec2(t * 0.55, -t * 0.32));
+  float n2 = fbm(zp * 1.95 - vec2(t * 0.40, t * 0.45) + n1 * (1.05 + uBass * 0.35));
+  float silk = pow(smoothstep(mix(0.24, 0.42, uDarkStage), 0.94, n2), mix(1.5, 2.0, uDarkStage));
+  float ridge = pow(clamp(1.0 - abs(n2 * 2.0 - 1.0), 0.0, 1.0), mix(3.4, 4.6, uDarkStage));
 
-  // True black negative space when album cover is dark-dominant; rich tinted wash on colorful covers
   float bgScale = mix(1.0, 0.05, uDarkStage);
-  float baseFloor = (0.08 + uEnergy * 0.14 + dropLift * 0.16 + kickHit * 0.22) * bgScale;
+  float baseFloor = (0.09 + uEnergy * 0.12 + dropLift * 0.14 + kickBreath * 0.16) * bgScale;
   vec3 col = uBackdrop + deepTint * baseFloor;
 
-  // Silk light ribbons emerging cleanly from the black void in primary cover color
-  float silkEnergy = silk * (0.14 + uBass * 0.34 + kickHit * 0.44 + dropLift * 0.20);
+  // Lush slow silk clouds breathing with bass & kicks
+  float silkEnergy = silk * (0.14 + uBass * 0.26 + kickBreath * 0.28 + dropLift * 0.16);
   col += primaryCol * silkEnergy;
 
-  // Crisp secondary album color veins (e.g. Silver alongside Gold on RAM, or crisp White on B&W)
-  col += accentCol * ridge * (0.16 + uVocal * 0.34 + kickHit * 0.36) * mix(1.0, 0.72, uDarkStage);
+  // Delicate secondary album color veins
+  col += accentCol * ridge * (0.12 + uVocal * 0.24 + snareSoft * 0.20) * mix(1.0, 0.72, uDarkStage);
 
-  // Expanding concentric kick shockwave rolling center -> edges
-  float waveR = fract(uFlowTime * 0.52) * 1.35;
-  float shockRing = exp(-abs(r - waveR) * 16.0) * (1.0 - waveR / 1.35);
-  col += mixCoverColor(primaryCol, accentCol, 0.45) * shockRing * (0.14 + kickHit * 0.82 + uSubBass * 0.26);
-
-  // Live FFT spectrum light curtains rising from bottom & top edges
+  // Soft bottom & top ambient spectrum mist (gentle backlight movement without harsh flicker)
   float symX = abs(uv.x - 0.5) * 2.0;
-  float fft = sampleFFT(pow(symX, 0.85) * 0.86 + 0.02);
-  float curtainScale = mix(1.0, 0.52, uDarkStage);
-  float bottomCurtain = exp(-uv.y * (5.6 - fft * 2.4 - kickHit * 0.9)) * (0.14 + fft * 0.68) * curtainScale;
-  float topCurtain = exp(-(1.0 - uv.y) * (6.0 - fft * 2.0 - uTreble * 1.0)) * (0.08 + fft * 0.42) * curtainScale;
-  col += mixCoverColor(primaryCol, accentCol, fft * 0.55) * (bottomCurtain + topCurtain) * (0.36 + uBass * 0.44);
+  float fft = sampleFFT(pow(symX, 0.88) * 0.84 + 0.02);
+  float curtainScale = mix(1.0, 0.48, uDarkStage);
+  float bottomMist = exp(-uv.y * (5.2 - fft * 1.8 - kickBreath * 0.6)) * (0.12 + fft * 0.42) * curtainScale;
+  float topMist = exp(-(1.0 - uv.y) * (5.8 - fft * 1.4)) * (0.07 + fft * 0.26) * curtainScale;
+  col += mixCoverColor(primaryCol, accentCol, fft * 0.45) * (bottomMist + topMist) * (0.42 + uBass * 0.32);
 
-  // Snare diagonal spotlight sweep in the cover's secondary accent color
-  float sweepCoord = dot(p, normalize(vec2(1.0, 0.55))) - sin(uTime * 1.7) * 0.42;
-  float snareBeam = exp(-abs(sweepCoord) * 5.2) * snareHit;
-  col += accentCol * snareBeam * 0.52;
-
-  // Subtle vocal halo behind lyrics (restrained on dark-stage covers so black stays deep)
-  float vocalAura = exp(-r * r * (3.8 - uVocal * 1.0)) * (0.06 + uVocal * 0.26 + kickHit * 0.14) * mix(1.0, 0.42, uDarkStage);
+  // Warm soft center vocal glow
+  float vocalAura = exp(-r * r * (3.6 - uVocal * 0.65)) * (0.06 + uVocal * 0.20 + kickBreath * 0.10) * mix(1.0, 0.45, uDarkStage);
   col += primaryCol * vocalAura;
 
-  // Kick perimeter bounce so average-screen-color backlights punch crisply on drums
-  float edgeBand = smoothstep(0.55, 1.15, r);
-  col += primaryCol * edgeBand * (uHiHat * 0.18 + kickHit * 0.26) * mix(1.0, 0.65, uDarkStage);
+  // Smooth perimeter breath for average-screen-color backlights
+  float edgeBand = smoothstep(0.55, 1.18, r);
+  col += primaryCol * edgeBand * (kickBreath * 0.18 + uSubBass * 0.10) * mix(1.0, 0.62, uDarkStage);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
 `;
 
 /**
- * 2. BASS ECLIPSE — High-Contrast Impact Reactor
- * Pitch-black void on dark covers with a blazing radial 64-spoke EQ ring in primary cover color,
- * secondary album color crest tips & snare corona, and crisp kick perimeter flares.
+ * 2. BASS ECLIPSE — Serene High-Contrast Radial Halo
+ * Clean dark stage with a smooth glowing ring, damped radial EQ bars, and gentle beat swells.
  */
 const BASS_ECLIPSE_FRAG = `${COMMON_HEADER}
 void main() {
@@ -258,74 +245,64 @@ void main() {
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.70);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.68);
 
-  float punch = clamp(uPulse, 0.4, 2.0);
-  float kickHit = clamp(uKick * punch, 0.0, 1.18);
-  float snareHit = clamp(uSnare * punch, 0.0, 1.15);
+  float punch = clamp(uPulse, 0.4, 1.3);
+  float kickBreath = clamp(uKick * punch, 0.0, 0.9);
+  float snareSoft = clamp(uSnare * punch, 0.0, 0.75);
 
   float symAngle = abs(angle) / 3.14159265;
-  float fft = sampleFFT(pow(symAngle, 0.92) * 0.85 + 0.02);
   float wave = sampleWave(symAngle);
 
-  // Quantized 64-spoke radial EQ bars around the eclipse ring
   float spokeCount = 64.0;
   float spokeId = floor((angle + 3.14159265) / 6.2831853 * spokeCount);
   float spokeLocal = fract((angle + 3.14159265) / 6.2831853 * spokeCount) - 0.5;
   float spokeAngleNorm = abs((spokeId / spokeCount) * 2.0 - 1.0);
   float spokeFft = sampleFFT(pow(spokeAngleNorm, 0.9) * 0.84 + 0.02);
-  float spokeMask = smoothstep(0.35, 0.14, abs(spokeLocal));
+  float spokeMask = smoothstep(0.36, 0.15, abs(spokeLocal));
 
-  // True black background between beats on dark covers; dramatic kick pulse across outer stage
-  float bgScale = mix(1.0, 0.28, uDarkStage);
-  float roomFlash = (0.05 + uEnergy * 0.09 + uDrop * 0.12 + kickHit * 0.34 + snareHit * 0.14) * bgScale;
-  float subtleCloud = fbm(p * 1.9 + vec2(uFlowTime * 0.22, -uFlowTime * 0.16));
-  vec3 col = uBackdrop + mix(deepTint, primaryCol, subtleCloud) * roomFlash;
+  // Calm dark stage with gentle breathing glow
+  float bgScale = mix(1.0, 0.22, uDarkStage);
+  float roomGlow = (0.05 + uEnergy * 0.08 + uDrop * 0.09 + kickBreath * 0.20) * bgScale;
+  float subtleCloud = fbm(p * 1.6 + vec2(uFlowTime * 0.12, -uFlowTime * 0.09));
+  vec3 col = uBackdrop + mix(deepTint, primaryCol, subtleCloud) * roomGlow;
 
-  // Outer perimeter bounce-light surge on kick & snare (keeps dark core pitch-black!)
-  float edgeFactor = smoothstep(0.42, 1.05, r);
-  col += primaryCol * edgeFactor * (kickHit * 0.42 + uSubBass * 0.16);
-  col += accentCol * edgeFactor * snareHit * 0.32;
+  // Smooth perimeter swell on kicks (no sudden strobe blast)
+  float edgeFactor = smoothstep(0.48, 1.12, r);
+  col += primaryCol * edgeFactor * (kickBreath * 0.24 + uSubBass * 0.12);
+  col += accentCol * edgeFactor * snareSoft * 0.14;
 
-  // Core eclipse ring expanding crisply with sub-bass & kick
-  float innerR = 0.26 + uSubBass * 0.045 + kickHit * 0.055;
-  float outerBarR = innerR + 0.02 + spokeFft * (0.22 + uBass * 0.10);
+  // Serene eclipse ring expanding smoothly with bass
+  float innerR = 0.27 + uSubBass * 0.026 + kickBreath * 0.028;
+  float outerBarR = innerR + 0.018 + spokeFft * (0.14 + uBass * 0.055);
 
-  // Crisp glowing inner eclipse rim
   float rimDist = abs(r - innerR);
-  float rimCore = exp(-rimDist * 75.0) * (0.75 + kickHit * 0.85);
-  float rimHalo = exp(-rimDist * 14.0) * (0.18 + uBass * 0.34 + kickHit * 0.40);
+  float rimCore = exp(-rimDist * 70.0) * (0.62 + kickBreath * 0.45);
+  float rimHalo = exp(-rimDist * 13.0) * (0.16 + uBass * 0.24 + kickBreath * 0.24);
 
-  // High-contrast radial FFT spikes jumping cleanly outward from the eclipse
+  // Smooth radial FFT spokes
   float inBar = smoothstep(innerR - 0.008, innerR + 0.006, r) *
-                smoothstep(outerBarR + 0.012, outerBarR - 0.006, r);
-  float barTip = exp(-abs(r - outerBarR) * 65.0) * spokeMask * (0.35 + spokeFft * 0.85);
-  float barGlow = inBar * spokeMask * (0.48 + spokeFft * 0.90);
+                smoothstep(outerBarR + 0.014, outerBarR - 0.006, r);
+  float barTip = exp(-abs(r - outerBarR) * 65.0) * spokeMask * (0.26 + spokeFft * 0.58);
+  float barGlow = inBar * spokeMask * (0.36 + spokeFft * 0.65);
 
-  // Live inner waveform filament inside the eclipse in secondary accent color
-  float waveR = innerR - 0.042 + wave * (0.036 + uVocal * 0.04);
-  float waveRing = exp(-abs(r - waveR) * 95.0) * (0.45 + uVocal * 0.78);
-
-  // Fast outer shockwave blast
-  float shockR = 0.28 + (1.0 - clamp(kickHit, 0.0, 1.0)) * 0.82;
-  float shock = exp(-abs(r - shockR) * 18.0) * kickHit * 0.70;
+  // Subtle inner vocal filament
+  float waveR = innerR - 0.042 + wave * (0.022 + uVocal * 0.022);
+  float waveRing = exp(-abs(r - waveR) * 95.0) * (0.32 + uVocal * 0.48);
 
   col += mixCoverColor(primaryCol, accentCol, 0.35) * rimCore;
   col += primaryCol * rimHalo;
-  col += mixCoverColor(primaryCol, accentCol, spokeFft * 0.55) * barGlow;
+  col += mixCoverColor(primaryCol, accentCol, spokeFft * 0.5) * barGlow;
   col += accentCol * barTip;
   col += accentCol * waveRing;
-  col += mixCoverColor(primaryCol, accentCol, 0.4) * shock;
-  col += accentCol * exp(-abs(r - (innerR + fft * 0.14)) * 26.0) * uHiHat * 0.42;
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
 `;
 
 /**
- * 3. CHROMATIC TIDE — Living Dual-Tone Waveform & Bass Tides
- * Edge-to-edge real-time waveform ribbons in primary + secondary cover colors gliding across
- * a true-black or deep-cover backdrop.
+ * 3. CHROMATIC TIDE — Graceful Ocean Waves & Smooth Audio Ribbon
+ * Slow, wide rolling liquid swells with a calm, silk-smooth audio ribbon.
  */
 const CHROMATIC_TIDE_FRAG = `${COMMON_HEADER}
 void main() {
@@ -335,74 +312,67 @@ void main() {
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.72);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.68);
 
-  float punch = clamp(uPulse, 0.4, 2.0);
-  float kickHit = clamp(uKick * punch, 0.0, 1.18);
-  float snareHit = clamp(uSnare * punch, 0.0, 1.15);
+  float punch = clamp(uPulse, 0.4, 1.3);
+  float kickBreath = clamp(uKick * punch, 0.0, 0.9);
+  float snareSoft = clamp(uSnare * punch, 0.0, 0.75);
 
-  float wave = sampleWave(uv.x);
-  float waveL = sampleWave(uv.x - 0.014);
-  float waveR = sampleWave(uv.x + 0.014);
-  float smoothWave = (waveL + wave * 2.0 + waveR) * 0.25;
+  // Multi-tap smoothed waveform so the ribbon flows like silk instead of buzzing
+  float smoothWave = (
+    sampleWave(uv.x - 0.025) * 0.15 +
+    sampleWave(uv.x - 0.012) * 0.22 +
+    sampleWave(uv.x) * 0.26 +
+    sampleWave(uv.x + 0.012) * 0.22 +
+    sampleWave(uv.x + 0.025) * 0.15
+  );
 
   float symX = abs(uv.x - 0.5) * 2.0;
   float fft = sampleFFT(pow(symX, 0.9) * 0.82 + 0.02);
 
-  // Background tide respects true black on dark covers while staying lush on colorful covers
-  float flow = uFlowTime * 0.48;
-  float tideField = sin(p.x * 2.8 + flow) * cos(p.y * 3.2 - flow * 0.7) * 0.5 + 0.5;
-  float fbmTide = fbm(p * 2.3 + vec2(flow * 0.35, -flow * 0.22));
+  // Slow rolling liquid tide backdrop
+  float flow = uFlowTime * 0.20;
+  float tideField = sin(p.x * 2.2 + flow) * cos(p.y * 2.4 - flow * 0.55) * 0.5 + 0.5;
+  float fbmTide = fbm(p * 1.8 + vec2(flow * 0.25, -flow * 0.16));
   float bgMix = pow(mix(tideField, fbmTide, 0.62), 1.45);
 
-  float bgScale = mix(1.0, 0.14, uDarkStage);
-  float globalLum = (0.09 + uEnergy * 0.15 + uDrop * 0.14 + kickHit * 0.24) * bgScale;
-  vec3 col = uBackdrop + mix(deepTint, primaryCol, bgMix) * (globalLum + bgMix * (0.10 + uBass * 0.22) * bgScale);
+  float bgScale = mix(1.0, 0.12, uDarkStage);
+  float globalLum = (0.09 + uEnergy * 0.12 + uDrop * 0.10 + kickBreath * 0.16) * bgScale;
+  vec3 col = uBackdrop + mix(deepTint, primaryCol, bgMix) * (globalLum + bgMix * (0.09 + uBass * 0.16) * bgScale);
 
-  // Center-anchored mirrored bass tide surge emerging in primary cover color
+  // Wide soft mirrored bass swell
   float distCenterY = abs(uv.y - 0.5);
-  float bassEnvelope = 0.05 + fft * (0.24 + uBass * 0.15 + kickHit * 0.12);
-  float tideBody = smoothstep(bassEnvelope + 0.12, bassEnvelope * 0.06, distCenterY);
-  col += primaryCol * tideBody * (0.24 + uBass * 0.34 + kickHit * 0.32);
+  float bassEnvelope = 0.045 + fft * (0.17 + uBass * 0.10 + kickBreath * 0.06);
+  float tideBody = smoothstep(bassEnvelope + 0.14, bassEnvelope * 0.06, distCenterY);
+  col += primaryCol * tideBody * (0.18 + uBass * 0.26 + kickBreath * 0.20);
 
-  // Horizontal harmonic ripple waves radiating outward from center
-  float ripples = sin(distCenterY * 28.0 - uFlowTime * 4.8) * 0.5 + 0.5;
-  ripples = pow(ripples, 3.8) * exp(-distCenterY * 2.8);
-  col += mixCoverColor(primaryCol, accentCol, 0.5) * ripples * (0.12 + kickHit * 0.56 + uSubBass * 0.26);
-
-  // Primary electric real-time waveform ribbon in primary album color
-  float amp = 0.14 + uBass * 0.10 + kickHit * 0.08;
-  float yWave1 = 0.5 + smoothWave * amp + sin(uv.x * 8.0 + uFlowTime * 2.2) * 0.015;
+  // Calm primary waveform ribbon
+  float amp = 0.08 + uBass * 0.05 + kickBreath * 0.035;
+  float yWave1 = 0.5 + smoothWave * amp + sin(uv.x * 5.0 + uFlowTime * 0.9) * 0.014;
   float dWave1 = abs(uv.y - yWave1);
-  float ribbonCore = exp(-dWave1 * (95.0 - kickHit * 24.0));
-  float ribbonGlow = exp(-dWave1 * 15.0) * (0.28 + uEnergy * 0.40 + kickHit * 0.42);
+  float ribbonCore = exp(-dWave1 * 88.0);
+  float ribbonGlow = exp(-dWave1 * 14.0) * (0.22 + uEnergy * 0.28 + kickBreath * 0.24);
 
-  // Secondary offset harmonic waveform in secondary album color (e.g. Silver on RAM, White on Sick Boi!)
-  float yWave2 = 0.5 - smoothWave * (amp * 0.62) + cos(uv.x * 11.0 - uFlowTime * 1.9) * 0.018;
+  // Gentle secondary vocal wave
+  float yWave2 = 0.5 - smoothWave * (amp * 0.55) + cos(uv.x * 6.5 - uFlowTime * 0.75) * 0.016;
   float dWave2 = abs(uv.y - yWave2);
-  float ribbon2 = exp(-dWave2 * 100.0) * (0.55 + uVocal * 0.68 + snareHit * 0.58);
-  float glow2 = exp(-dWave2 * 18.0) * (0.20 + uVocal * 0.32);
+  float ribbon2 = exp(-dWave2 * 100.0) * (0.36 + uVocal * 0.45 + snareSoft * 0.30);
+  float glow2 = exp(-dWave2 * 18.0) * (0.14 + uVocal * 0.22);
 
-  // Crisp hi-hat sparkles along the waveform crest
-  float sparkleNoise = hash21(vec2(floor(uv.x * 140.0), floor(uTime * 18.0)));
-  float sparkle = step(0.92, sparkleNoise) * exp(-dWave1 * 42.0) * (uHiHat * 1.2 + uTreble * 0.55);
-
-  col += mixCoverColor(primaryCol, accentCol, 0.35) * ribbonCore * (0.95 + kickHit * 0.45);
+  col += mixCoverColor(primaryCol, accentCol, 0.35) * ribbonCore * (0.78 + kickBreath * 0.30);
   col += primaryCol * ribbonGlow;
   col += accentCol * (ribbon2 + glow2);
-  col += accentCol * sparkle * 0.68;
 
-  // Perimeter kick bounce
-  col += primaryCol * smoothstep(0.32, 0.5, distCenterY) * (kickHit * 0.28 + snareHit * 0.16);
+  // Soft perimeter breath
+  col += primaryCol * smoothstep(0.35, 0.5, distCenterY) * (kickBreath * 0.18 + snareSoft * 0.10);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
 `;
 
 /**
- * 4. SPECTRUM WALL — 48 Kinetic Frequency Pillars on True Cover Backdrop
- * Pitch-black negative space on dark covers with glowing primary pillars + crisp secondary
- * album-color peak caps (e.g. Gold pillars with Silver tips on RAM, Crimson pillars with White tips on Sick Boi).
+ * 4. SPECTRUM WALL — Calm Frosted Kinetic Frequency Pillars
+ * 48 architectural frequency bars rising smoothly in true album colors with gentle ambient breathing.
  */
 const SPECTRUM_WALL_FRAG = `${COMMON_HEADER}
 void main() {
@@ -410,11 +380,11 @@ void main() {
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.68);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.66);
 
-  float punch = clamp(uPulse, 0.4, 2.0);
-  float kickHit = clamp(uKick * punch, 0.0, 1.18);
-  float snareHit = clamp(uSnare * punch, 0.0, 1.15);
+  float punch = clamp(uPulse, 0.4, 1.3);
+  float kickBreath = clamp(uKick * punch, 0.0, 0.9);
+  float snareSoft = clamp(uSnare * punch, 0.0, 0.75);
 
   float numCols = 48.0;
   float colIndex = floor(uv.x * numCols);
@@ -424,49 +394,47 @@ void main() {
 
   float freqPos = pow(symNorm, 0.85) * 0.88 + 0.015;
   float fft = (
-    sampleFFT(freqPos - 0.012) * 0.25 +
+    sampleFFT(freqPos - 0.016) * 0.25 +
     sampleFFT(freqPos) * 0.5 +
-    sampleFFT(freqPos + 0.012) * 0.25
+    sampleFFT(freqPos + 0.016) * 0.25
   );
 
   float pillarHalfH = clamp(
-    0.04 + fft * (0.29 + uEnergy * 0.09) + kickHit * (1.0 - symNorm * 0.7) * 0.10,
-    0.04,
-    0.45
+    0.035 + fft * (0.24 + uEnergy * 0.06) + kickBreath * (1.0 - symNorm * 0.7) * 0.055,
+    0.035,
+    0.40
   );
   float distY = abs(uv.y - 0.5);
-
   float colMask = smoothstep(0.42, 0.28, abs(colLocalX));
 
-  // Backdrop respects true black on dark covers while glowing cleanly behind the bars
-  float bgScale = mix(1.0, 0.14, uDarkStage);
-  float wallGlow = (0.08 + uEnergy * 0.12 + uDrop * 0.12 + kickHit * 0.22 + snareHit * 0.10) * bgScale;
+  float bgScale = mix(1.0, 0.12, uDarkStage);
+  float wallGlow = (0.07 + uEnergy * 0.10 + uDrop * 0.10 + kickBreath * 0.16) * bgScale;
   float verticalGrad = 1.0 - distY * 0.4;
   vec3 col = uBackdrop + mix(deepTint, primaryCol, verticalGrad) * wallGlow;
 
-  // Soft vertical spill glow around active pillars
-  float spill = exp(-max(distY - pillarHalfH * 0.65, 0.0) * 7.8) * (0.12 + fft * 0.34);
-  col += primaryCol * spill * (0.45 + uEnergy * 0.35);
+  // Soft spill glow behind active pillars
+  float spill = exp(-max(distY - pillarHalfH * 0.65, 0.0) * 8.2) * (0.10 + fft * 0.26);
+  col += primaryCol * spill * (0.40 + uEnergy * 0.28);
 
-  // Glowing pillar body transitioning smoothly from primary cover color toward secondary cover color at peak
-  float insidePillar = smoothstep(pillarHalfH + 0.012, pillarHalfH - 0.008, distY) * colMask;
+  // Smooth frosted pillar body
+  float insidePillar = smoothstep(pillarHalfH + 0.014, pillarHalfH - 0.008, distY) * colMask;
   float verticalPos = clamp(distY / max(pillarHalfH, 0.001), 0.0, 1.0);
-  vec3 pillarCol = mixCoverColor(primaryCol, accentCol, pow(verticalPos, 1.8) * 0.65);
-  float pillarLum = 0.42 + verticalPos * 0.32 + fft * 0.56 + kickHit * 0.25;
+  vec3 pillarCol = mixCoverColor(primaryCol, accentCol, pow(verticalPos, 1.8) * 0.6);
+  float pillarLum = 0.34 + verticalPos * 0.26 + fft * 0.44 + kickBreath * 0.16;
   col += pillarCol * insidePillar * pillarLum;
 
-  // Razor-sharp glowing cap at the peak of every frequency bar in secondary accent color
+  // Clean luminous bar tip
   float capDist = abs(distY - pillarHalfH);
-  float capGlow = exp(-capDist * 85.0) * colMask * (0.48 + fft * 0.95 + uHiHat * 0.35);
+  float capGlow = exp(-capDist * 85.0) * colMask * (0.34 + fft * 0.68);
   col += accentCol * capGlow;
 
-  // Center horizon beam pulsing crisply on snares & vocals
-  float centerBeam = exp(-distY * 68.0) * (0.20 + uVocal * 0.45 + snareHit * 0.68);
+  // Subtle center horizon line
+  float centerBeam = exp(-distY * 72.0) * (0.14 + uVocal * 0.28 + snareSoft * 0.32);
   col += mixCoverColor(primaryCol, accentCol, 0.5) * centerBeam;
 
-  // Top & bottom kick bounce for edge/avg backlights
-  float perimeter = smoothstep(0.35, 0.50, distY);
-  col += primaryCol * perimeter * (kickHit * 0.26 + uSubBass * 0.16 + uDrop * 0.14);
+  // Soft perimeter breath
+  float perimeter = smoothstep(0.36, 0.50, distY);
+  col += primaryCol * perimeter * (kickBreath * 0.18 + uSubBass * 0.12);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
@@ -477,28 +445,35 @@ export const SHADER_PRESETS: ShaderPresetMeta[] = [
     id: 'pulse',
     name: 'Pulse Wash',
     key: '1',
-    tagline: 'True-cover concert wash & kick shockwaves',
+    tagline: 'Calm breathing velvet wash & subtle bass glow',
     fragmentSource: PULSE_WASH_FRAG,
   },
   {
     id: 'eclipse',
     name: 'Bass Eclipse',
     key: '2',
-    tagline: 'High-contrast dark stage with radial EQ & beat flashes',
+    tagline: 'Serene dark stage with smooth radial EQ halo',
     fragmentSource: BASS_ECLIPSE_FRAG,
   },
   {
     id: 'tide',
     name: 'Chromatic Tide',
     key: '3',
-    tagline: 'Edge-to-edge living dual-tone waveform & bass tides',
+    tagline: 'Graceful rolling ocean waves & silk waveform ribbon',
     fragmentSource: CHROMATIC_TIDE_FRAG,
   },
   {
     id: 'spectrum',
     name: 'Spectrum Wall',
     key: '4',
-    tagline: '48 kinetic frequency pillars in true album colors',
+    tagline: '48 smooth frosted kinetic frequency pillars',
     fragmentSource: SPECTRUM_WALL_FRAG,
+  },
+  {
+    id: 'blank',
+    name: 'Blank',
+    key: '5',
+    tagline: 'Clean solid-color background with zero motion',
+    fragmentSource: '',
   },
 ];

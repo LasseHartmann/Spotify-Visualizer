@@ -2,26 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import type { LyricsResult, TrackInfo } from '@shared/types';
-import { normalizeForCompare, normalizeTrackTitle } from '@shared/titleNormalize';
-
-interface LrcLibRecord {
-  id: number;
-  trackName?: string;
-  artistName?: string;
-  albumName?: string;
-  duration?: number;
-  instrumental?: boolean;
-  plainLyrics?: string | null;
-  syncedLyrics?: string | null;
-}
+import { fetchLrclibLyrics } from '@shared/lyricsLookup';
 
 interface CacheEntry {
   result: LyricsResult;
   cachedAt: number;
 }
 
-const LRCLIB_BASE = 'https://lrclib.net/api';
-const USER_AGENT = 'SpotifyVisualizer/1.0.0 (Personal Windows Desktop Visualizer)';
 const MAX_CACHE_ENTRIES = 500;
 const NOT_FOUND_TTL_MS = 1000 * 60 * 60 * 12; // retry missing tracks after 12h
 
@@ -67,194 +54,11 @@ export class LyricsService {
       }
     }
 
-    const primaryArtist = track.artists[0] ?? '';
-    const durationSec = Math.round(track.durationMs / 1000);
-
-    try {
-      // 1. Exact lookup via /api/get
-      const exact = await this.queryGet(track.name, primaryArtist, track.album, durationSec);
-      if (exact && (exact.syncedLyrics || exact.instrumental)) {
-        const result = this.recordToResult(track.id, exact);
-        this.putCache(track.id, result);
-        return result;
-      }
-
-      // 2. Fallback search with normalized track title
-      const cleanTitle = normalizeTrackTitle(track.name);
-      const searchCandidates = await this.querySearch(cleanTitle, primaryArtist);
-      const best = this.pickBestCandidate(
-        searchCandidates,
-        cleanTitle,
-        primaryArtist,
-        durationSec
-      );
-
-      if (best && (best.syncedLyrics || best.instrumental)) {
-        const result = this.recordToResult(track.id, best);
-        this.putCache(track.id, result);
-        return result;
-      }
-
-      // 3. Fallback to plain lyrics if either exact or search had them
-      const plainRecord = exact?.plainLyrics ? exact : best?.plainLyrics ? best : null;
-      if (plainRecord) {
-        const result = this.recordToResult(track.id, plainRecord);
-        this.putCache(track.id, result);
-        return result;
-      }
-
-      const notFound: LyricsResult = {
-        trackId: track.id,
-        status: 'not_found',
-        syncedLyrics: null,
-        plainLyrics: null,
-        source: 'none',
-      };
-      this.putCache(track.id, notFound);
-      return notFound;
-    } catch {
-      return {
-        trackId: track.id,
-        status: 'error',
-        syncedLyrics: null,
-        plainLyrics: null,
-        source: 'none',
-      };
+    const result = await fetchLrclibLyrics(track, false);
+    if (result.status !== 'error') {
+      this.putCache(track.id, result);
     }
-  }
-
-  private async queryGet(
-    trackName: string,
-    artistName: string,
-    albumName: string,
-    durationSec: number
-  ): Promise<LrcLibRecord | null> {
-    const params = new URLSearchParams({
-      track_name: trackName,
-      artist_name: artistName,
-      duration: String(durationSec),
-    });
-    if (albumName) {
-      params.set('album_name', albumName);
-    }
-
-    const res = await fetch(`${LRCLIB_BASE}/get?${params.toString()}`, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Lrclib-Client': USER_AGENT,
-      },
-    });
-
-    if (res.status === 404 || !res.ok) return null;
-    return (await res.json()) as LrcLibRecord;
-  }
-
-  private async querySearch(trackName: string, artistName: string): Promise<LrcLibRecord[]> {
-    const params = new URLSearchParams({
-      track_name: trackName,
-      artist_name: artistName,
-    });
-
-    const res = await fetch(`${LRCLIB_BASE}/search?${params.toString()}`, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Lrclib-Client': USER_AGENT,
-      },
-    });
-
-    if (!res.ok) return [];
-    const data = (await res.json()) as unknown;
-    return Array.isArray(data) ? (data as LrcLibRecord[]) : [];
-  }
-
-  private pickBestCandidate(
-    candidates: LrcLibRecord[],
-    cleanTitle: string,
-    artistName: string,
-    durationSec: number
-  ): LrcLibRecord | null {
-    if (candidates.length === 0) return null;
-
-    const targetTitle = normalizeForCompare(cleanTitle);
-    const targetArtist = normalizeForCompare(artistName);
-
-    let bestRecord: LrcLibRecord | null = null;
-    let bestScore = -Infinity;
-
-    for (const item of candidates) {
-      let score = 0;
-
-      if (item.syncedLyrics && item.syncedLyrics.trim().length > 0) {
-        score += 100;
-      } else if (item.instrumental) {
-        score += 50;
-      } else if (item.plainLyrics && item.plainLyrics.trim().length > 0) {
-        score += 20;
-      } else {
-        continue;
-      }
-
-      const itemTitle = normalizeForCompare(normalizeTrackTitle(item.trackName ?? ''));
-      const itemArtist = normalizeForCompare(item.artistName ?? '');
-
-      if (itemTitle === targetTitle) score += 35;
-      else if (itemTitle.includes(targetTitle) || targetTitle.includes(itemTitle)) score += 15;
-
-      if (itemArtist === targetArtist) score += 30;
-      else if (itemArtist.includes(targetArtist) || targetArtist.includes(itemArtist)) score += 15;
-
-      if (typeof item.duration === 'number' && durationSec > 0) {
-        const diff = Math.abs(item.duration - durationSec);
-        if (diff <= 2) score += 40;
-        else if (diff <= 5) score += 25;
-        else if (diff <= 10) score += 8;
-        else score -= diff * 2;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestRecord = item;
-      }
-    }
-
-    return bestScore >= 40 ? bestRecord : null;
-  }
-
-  private recordToResult(trackId: string, record: LrcLibRecord): LyricsResult {
-    if (record.syncedLyrics && record.syncedLyrics.trim().length > 0) {
-      return {
-        trackId,
-        status: 'synced',
-        syncedLyrics: record.syncedLyrics,
-        plainLyrics: record.plainLyrics ?? null,
-        source: 'lrclib',
-      };
-    }
-    if (record.instrumental) {
-      return {
-        trackId,
-        status: 'instrumental',
-        syncedLyrics: null,
-        plainLyrics: null,
-        source: 'lrclib',
-      };
-    }
-    if (record.plainLyrics && record.plainLyrics.trim().length > 0) {
-      return {
-        trackId,
-        status: 'plain',
-        syncedLyrics: null,
-        plainLyrics: record.plainLyrics,
-        source: 'lrclib',
-      };
-    }
-    return {
-      trackId,
-      status: 'not_found',
-      syncedLyrics: null,
-      plainLyrics: null,
-      source: 'none',
-    };
+    return result;
   }
 
   private putCache(trackId: string, result: LyricsResult): void {

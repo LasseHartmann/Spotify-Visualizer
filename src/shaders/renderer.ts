@@ -49,6 +49,8 @@ export class ShaderRenderer {
 
   private currentPalette: ThemePalette = DEFAULT_PALETTE;
   private targetPalette: ThemePalette = DEFAULT_PALETTE;
+  private currentBlankColor: { r: number; g: number; b: number } = { r: 0.024, g: 0.031, b: 0.059 };
+  private targetBlankColor: { r: number; g: number; b: number } = { r: 0.024, g: 0.031, b: 0.059 };
   private colorCycle = true;
   private elapsedTime = 0;
   private flowTime = 0;
@@ -63,7 +65,7 @@ export class ShaderRenderer {
   }
 
   public setPreset(preset: ShaderPresetId, immediate = false): void {
-    if (!this.programs.has(preset)) return;
+    if (preset !== 'blank' && !this.programs.has(preset)) return;
     if (immediate) {
       this.activePreset = preset;
       this.pendingPreset = null;
@@ -76,6 +78,13 @@ export class ShaderRenderer {
 
   public setPalette(palette: ThemePalette): void {
     this.targetPalette = palette;
+  }
+
+  public setBlankColor(color: { r: number; g: number; b: number }, immediate = false): void {
+    this.targetBlankColor = color;
+    if (immediate) {
+      this.currentBlankColor = { ...color };
+    }
   }
 
   public setColorCycle(enabled: boolean): void {
@@ -104,22 +113,41 @@ export class ShaderRenderer {
 
     const dt = Math.min(Math.max(dtSec, 0.001), 0.05);
     this.elapsedTime += dt;
+    // Calm, silky flow speed (gentle acceleration on beats instead of frantic spikes)
     this.flowTime +=
-      dt * (0.65 + audio.bass * 1.55 + audio.kick * 1.9 + audio.drop * 0.9 + audio.energy * 0.4);
+      dt * (0.32 + audio.energy * 0.36 + audio.bass * 0.28 + audio.kick * 0.24);
 
-    // Smooth palette cross-fade when track changes
-    const paletteLerp = 1 - Math.exp(-dt * 2.2);
+    // Smooth palette & responsive blank color cross-fades
+    const paletteLerp = 1 - Math.exp(-dt * 2.8);
+    const blankLerp = 1 - Math.exp(-dt * 8.0);
     this.currentPalette = lerpPalette(this.currentPalette, this.targetPalette, paletteLerp);
+    this.currentBlankColor = {
+      r: this.currentBlankColor.r + (this.targetBlankColor.r - this.currentBlankColor.r) * blankLerp,
+      g: this.currentBlankColor.g + (this.targetBlankColor.g - this.currentBlankColor.g) * blankLerp,
+      b: this.currentBlankColor.b + (this.targetBlankColor.b - this.currentBlankColor.b) * blankLerp,
+    };
 
     // Smooth preset transition fade
     if (this.pendingPreset) {
-      this.fade = Math.max(0, this.fade - dt * 5.8);
+      this.fade = Math.max(0, this.fade - dt * 5.2);
       if (this.fade <= 0.01) {
         this.activePreset = this.pendingPreset;
         this.pendingPreset = null;
       }
     } else if (this.fade < 1.0) {
-      this.fade = Math.min(1.0, this.fade + dt * 5.0);
+      this.fade = Math.min(1.0, this.fade + dt * 4.6);
+    }
+
+    // Blank mode: pure crisp solid color with zero shader movement & ~0% GPU usage
+    if (this.activePreset === 'blank') {
+      gl.clearColor(
+        this.currentBlankColor.r * this.fade,
+        this.currentBlankColor.g * this.fade,
+        this.currentBlankColor.b * this.fade,
+        1.0
+      );
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return;
     }
 
     const compiled = this.programs.get(this.activePreset);
@@ -227,6 +255,7 @@ export class ShaderRenderer {
     if (!vert) return;
 
     for (const preset of SHADER_PRESETS) {
+      if (!preset.fragmentSource) continue;
       const frag = this.compileShader(gl, gl.FRAGMENT_SHADER, preset.fragmentSource);
       if (!frag) {
         console.error(`[shader] Failed to compile preset: ${preset.id}`);

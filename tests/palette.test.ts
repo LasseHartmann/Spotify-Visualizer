@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { extractPaletteFromRgba, sampleMoodColor } from '../src/lib/palette';
+import {
+  extractPaletteFromRgba,
+  isLightColor,
+  paletteFromCustomHex,
+  parseHexColor,
+  sampleMoodColor,
+} from '../src/lib/palette';
 
 function makeImageFromRegions(
   regions: Array<{ ratio: number; rgb: [number, number, number] }>,
@@ -92,5 +98,28 @@ describe('extractPaletteFromRgba', () => {
 
     expect(sampleMoodColor(pal, 0.0, false)).toEqual(pal.color1);
     expect(sampleMoodColor(pal, 1.5, false)).toEqual(pal.color1);
+  });
+});
+
+describe('custom background colors', () => {
+  it('parses hex colors and detects light vs dark backdrops accurately', () => {
+    const black = parseHexColor('#000000');
+    expect(black).toEqual({ r: 0, g: 0, b: 0 });
+    expect(isLightColor(black)).toBe(false);
+
+    const paper = parseHexColor('#f4f4f6');
+    expect(paper.r).toBeGreaterThan(0.95);
+    expect(isLightColor(paper)).toBe(true);
+  });
+
+  it('builds a clean monochrome palette for pure black and white custom hex without fake tints', () => {
+    const blackPal = paletteFromCustomHex('#000000');
+    expect(blackPal.backdrop).toEqual({ r: 0, g: 0, b: 0 });
+    expect(blackPal.darkStage).toBeGreaterThan(0.9);
+    expect(Math.abs(blackPal.color1.r - blackPal.color1.b)).toBeLessThan(0.08);
+
+    const navyPal = paletteFromCustomHex('#0f1d40');
+    expect(navyPal.color1.b).toBeGreaterThan(navyPal.color1.r);
+    expect(navyPal.backdrop.b).toBeGreaterThan(navyPal.backdrop.r);
   });
 });

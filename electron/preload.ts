@@ -7,6 +7,7 @@ import type {
 } from '@shared/types';
 
 const api: VisualizerApi = {
+  platform: 'electron',
   auth: {
     getState: () => ipcRenderer.invoke('auth:get-state'),
     setClientId: (clientId: string) => ipcRenderer.invoke('auth:set-client-id', clientId),

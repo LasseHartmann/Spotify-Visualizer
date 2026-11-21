@@ -238,55 +238,55 @@ export class AudioDsp {
     this.hiHatFluxHist[this.histCursor] = hiHatFlux;
     this.histCursor = (this.histCursor + 1) % FLUX_HISTORY;
 
-    // Kick drum transient detector
+    // Kick drum transient detector (smooth, musical thump without harsh strobing)
     const kickThresh = Math.max(0.045, kickStats.mean + kickStats.std * 1.35);
     let kickFired = false;
     if (
       hasSignal &&
       kickFlux > kickThresh &&
       normBass > 0.24 &&
-      nowMs - this.lastKickMs > 135
+      nowMs - this.lastKickMs > 155
     ) {
       const ratio = (kickFlux - kickThresh) / Math.max(0.05, kickStats.mean + 0.04);
-      const strength = clamp((0.66 + ratio * 0.32) * clamp(sens, 0.7, 1.35), 0.62, 1.0);
+      const strength = clamp((0.64 + ratio * 0.28) * clamp(sens, 0.7, 1.25), 0.62, 0.96);
       f.kick = Math.max(f.kick, strength);
       this.lastKickMs = nowMs;
       kickFired = true;
     } else {
-      f.kick *= Math.exp(-dt * 7.6);
+      f.kick *= Math.exp(-dt * 5.2);
     }
 
-    // Snare / clap transient detector
-    const snareThresh = Math.max(0.036, snareStats.mean + snareStats.std * 1.45);
+    // Snare / clap transient detector (gentle secondary accent)
+    const snareThresh = Math.max(0.038, snareStats.mean + snareStats.std * 1.5);
     if (
       hasSignal &&
       snareFlux > snareThresh &&
       (normLowMid > 0.2 || normVocal > 0.22) &&
-      nowMs - this.lastSnareMs > 145
+      nowMs - this.lastSnareMs > 165
     ) {
       const ratio = (snareFlux - snareThresh) / Math.max(0.04, snareStats.mean + 0.035);
-      const strength = clamp((0.58 + ratio * 0.34) * clamp(sens, 0.7, 1.35), 0.55, 1.0);
+      const strength = clamp((0.48 + ratio * 0.28) * clamp(sens, 0.7, 1.2), 0.45, 0.85);
       f.snare = Math.max(f.snare, strength);
       this.lastSnareMs = nowMs;
     } else {
-      f.snare *= Math.exp(-dt * 9.5);
+      f.snare *= Math.exp(-dt * 6.8);
     }
 
-    // Hi-hat / high-frequency sparkle detector
-    const hiHatThresh = Math.max(0.028, hiHatStats.mean + hiHatStats.std * 1.4);
-    if (hasSignal && hiHatFlux > hiHatThresh && nowMs - this.lastHiHatMs > 95) {
-      f.hiHat = Math.max(f.hiHat, clamp(0.6 + hiHatFlux * 2.5, 0.55, 1.0));
+    // Hi-hat / high-frequency shimmer detector
+    const hiHatThresh = Math.max(0.03, hiHatStats.mean + hiHatStats.std * 1.45);
+    if (hasSignal && hiHatFlux > hiHatThresh && nowMs - this.lastHiHatMs > 120) {
+      f.hiHat = Math.max(f.hiHat, clamp(0.45 + hiHatFlux * 1.8, 0.4, 0.78));
       this.lastHiHatMs = nowMs;
     } else {
-      f.hiHat *= Math.exp(-dt * 13.5);
+      f.hiHat *= Math.exp(-dt * 9.5);
     }
 
-    // 4. Snappy attack / musical release band envelopes
-    f.subBass = expSmooth(f.subBass, normSub, dt, 42, 9.5);
-    f.bass = expSmooth(f.bass, normBass, dt, 46, 10.5);
-    f.lowMid = expSmooth(f.lowMid, normLowMid, dt, 34, 9.0);
-    f.vocal = expSmooth(f.vocal, normVocal, dt, 30, 8.2);
-    f.treble = expSmooth(f.treble, normTreble, dt, 38, 11.5);
+    // 4. Smooth, velvety band envelopes (responsive to the music without frantic jitter)
+    f.subBass = expSmooth(f.subBass, normSub, dt, 22, 5.5);
+    f.bass = expSmooth(f.bass, normBass, dt, 24, 6.0);
+    f.lowMid = expSmooth(f.lowMid, normLowMid, dt, 18, 5.5);
+    f.vocal = expSmooth(f.vocal, normVocal, dt, 16, 5.0);
+    f.treble = expSmooth(f.treble, normTreble, dt, 20, 6.8);
 
     const instantEnergy =
       normSub * 0.22 +
@@ -294,7 +294,7 @@ export class AudioDsp {
       normLowMid * 0.16 +
       normVocal * 0.20 +
       normTreble * 0.12;
-    f.energy = expSmooth(f.energy, instantEnergy, dt, 24, 6.5);
+    f.energy = expSmooth(f.energy, instantEnergy, dt, 14, 4.2);
 
     // 5. Musical Drop / Chorus surge detector (volume-invariant pre-AGC short vs long energy ratio!)
     this.shortEnergy = expSmooth(this.shortEnergy, rawComposite, dt, 4.8, 2.2);
@@ -312,20 +312,17 @@ export class AudioDsp {
         ? clamp((surgeRatio - 1.22) * 1.45, 0, 1)
         : 0;
     const prevDrop = f.drop;
-    f.drop = expSmooth(f.drop, dropTarget, dt, 6.5, 1.35);
+    f.drop = expSmooth(f.drop, dropTarget, dt, 5.0, 1.2);
 
-    // 5b. Automatic self-regulating pulse intensity:
-    // - Gentle on chill/acoustic songs (~0.92-1.08)
-    // - Crisp & punchy on grooves/pop (~1.18-1.35)
-    // - Surges on chorus drops (~1.50), while governing nonstop rapid-fire kicks to avoid flat washout
+    // 5b. Calm, self-regulating pulse intensity (0.68 chill -> 1.12 drop, governed on fast kicks)
     this.kickActivity = expSmooth(this.kickActivity, f.kick, dt, 1.4, 0.45);
-    const chillToGroove = 0.92 + clamp(f.energy * 0.34, 0, 0.34);
-    const dropBoost = f.drop * 0.36;
-    const rapidGovernor = Math.max(0, this.kickActivity - 0.30) * 1.15;
+    const chillToGroove = 0.68 + clamp(f.energy * 0.22, 0, 0.22);
+    const dropBoost = f.drop * 0.28;
+    const rapidGovernor = Math.max(0, this.kickActivity - 0.26) * 0.85;
     const targetAutoPulse = hasSignal
-      ? clamp(chillToGroove + dropBoost - rapidGovernor, 0.84, 1.55)
-      : 0.95;
-    f.autoPulse = expSmooth(f.autoPulse, targetAutoPulse, dt, 3.2, 1.5);
+      ? clamp(chillToGroove + dropBoost - rapidGovernor, 0.65, 1.14)
+      : 0.72;
+    f.autoPulse = expSmooth(f.autoPulse, targetAutoPulse, dt, 2.6, 1.3);
 
     // 6. Musical single-hue color stepping (changes cleanly on drops & phrases — never strobes!)
     if (hasSignal) {
@@ -368,13 +365,14 @@ export class AudioDsp {
       const fftVal = hasSignal
         ? clamp(Math.round((freqBins[logIdx] / 255) * gain * sens * 255), 0, 255)
         : 0;
-      f.textureData[x] = Math.round(f.textureData[x] * 0.35 + fftVal * 0.65);
+      f.textureData[x] = Math.round(f.textureData[x] * 0.62 + fftVal * 0.38);
 
       const waveIdx = Math.floor(u * waveLen);
       const centered = waveLen > 0 ? ((timeBins[waveIdx] - 128) / 128) * waveGain : 0;
-      f.textureData[AUDIO_TEX_WIDTH + x] = hasSignal
-        ? clamp(Math.round(128 + centered * 124), 0, 255)
-        : 128;
+      const targetWave = hasSignal ? clamp(Math.round(128 + centered * 116), 0, 255) : 128;
+      f.textureData[AUDIO_TEX_WIDTH + x] = Math.round(
+        f.textureData[AUDIO_TEX_WIDTH + x] * 0.45 + targetWave * 0.55
+      );
     }
 
     return f;

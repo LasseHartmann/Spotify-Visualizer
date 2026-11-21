@@ -1,14 +1,16 @@
 import { useEffect, useRef } from 'react';
-import type { ShaderPresetId, ThemePalette } from '@shared/types';
+import type { ColorMode, RGB, ShaderPresetId, ThemePalette } from '@shared/types';
 import { AudioEngine, type AudioCaptureStatus, type AudioFrame } from '@/audio/audioEngine';
 import { rgbToCss, sampleMoodColor } from '@/lib/palette';
+import { isWebPlatform } from '@/platform/webBridge';
 import { ShaderRenderer } from '@/shaders/renderer';
 
 interface ShaderCanvasProps {
   preset: ShaderPresetId;
   palette: ThemePalette;
+  blankColor: RGB;
   audioEnabled: boolean;
-  colorCycle: boolean;
+  colorMode: ColorMode;
   isPlaying: boolean;
   onAudioStatusChange: (status: AudioCaptureStatus) => void;
   audioEngineRef: React.MutableRefObject<AudioEngine | null>;
@@ -23,8 +25,9 @@ declare global {
 export function ShaderCanvas({
   preset,
   palette,
+  blankColor,
   audioEnabled,
-  colorCycle,
+  colorMode,
   isPlaying,
   onAudioStatusChange,
   audioEngineRef,
@@ -32,15 +35,17 @@ export function ShaderCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ShaderRenderer | null>(null);
   const isPlayingRef = useRef(isPlaying);
-  const colorCycleRef = useRef(colorCycle);
+  const colorModeRef = useRef(colorMode);
   const presetRef = useRef(preset);
   const paletteRef = useRef(palette);
+  const blankColorRef = useRef(blankColor);
   const audioEnabledRef = useRef(audioEnabled);
 
   isPlayingRef.current = isPlaying;
-  colorCycleRef.current = colorCycle;
+  colorModeRef.current = colorMode;
   presetRef.current = preset;
   paletteRef.current = palette;
+  blankColorRef.current = blankColor;
   audioEnabledRef.current = audioEnabled;
 
   useEffect(() => {
@@ -48,18 +53,19 @@ export function ShaderCanvas({
     if (!canvas) return;
 
     const renderer = new ShaderRenderer(canvas);
-    // Apply initial saved state immediately so Color Lock / Preset / Palette take effect on frame 1
+    // Apply initial saved state immediately so Blank / Color Mode / Preset / Palette take effect on frame 1
     renderer.setPreset(presetRef.current, true);
     renderer.setPalette(paletteRef.current);
-    renderer.setColorCycle(colorCycleRef.current);
+    renderer.setBlankColor(blankColorRef.current, true);
+    renderer.setColorCycle(colorModeRef.current === 'album-cycle');
     rendererRef.current = renderer;
 
     const audioEngine = new AudioEngine(onAudioStatusChange);
     audioEngine.setEnabled(audioEnabledRef.current);
     audioEngineRef.current = audioEngine;
 
-    if (audioEnabledRef.current) {
-      void audioEngine.startCapture();
+    if (audioEnabledRef.current && !isWebPlatform()) {
+      void audioEngine.startCapture('default');
     }
 
     const handleResize = () => renderer.resize();
@@ -93,11 +99,13 @@ export function ShaderCanvas({
       const activeHue = sampleMoodColor(
         renderer.getCurrentPalette(),
         frame.colorIndex,
-        colorCycleRef.current
+        colorModeRef.current === 'album-cycle'
       );
-      root.setProperty('--backlight', rgbToCss(activeHue));
+      const swatchColor =
+        presetRef.current === 'blank' ? blankColorRef.current : activeHue;
+      root.setProperty('--backlight', rgbToCss(swatchColor));
       root.setProperty('--highlight', rgbToCss(activeHue));
-      root.setProperty('--highlight-glow', rgbToCss(activeHue, 0.65));
+      root.setProperty('--highlight-glow', rgbToCss(activeHue, 0.58));
     };
 
     rafId = requestAnimationFrame(loop);
@@ -121,8 +129,12 @@ export function ShaderCanvas({
   }, [palette]);
 
   useEffect(() => {
-    rendererRef.current?.setColorCycle(colorCycle);
-  }, [colorCycle]);
+    rendererRef.current?.setBlankColor(blankColor);
+  }, [blankColor]);
+
+  useEffect(() => {
+    rendererRef.current?.setColorCycle(colorMode === 'album-cycle');
+  }, [colorMode]);
 
   useEffect(() => {
     audioEngineRef.current?.setEnabled(audioEnabled);

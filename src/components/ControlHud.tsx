@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import {
   Disc3,
   EyeOff,
@@ -5,22 +6,27 @@ import {
   Lock,
   LogOut,
   Maximize2,
+  Mic,
   Minimize2,
   Minus,
+  Monitor,
   Music2,
   Palette,
   Pause,
+  Pipette,
   Play,
   Plus,
   SkipBack,
   SkipForward,
   Sparkles,
   Subtitles,
+  Type,
   VolumeX,
   X,
 } from 'lucide-react';
 import type {
   AuthState,
+  ColorMode,
   LyricsLayoutMode,
   PlaybackControlAction,
   PlaybackState,
@@ -29,9 +35,27 @@ import type {
 import type { AudioCaptureStatus } from '@/audio/audioEngine';
 import { SHADER_PRESETS } from '@/shaders/presets';
 
+interface ColorSwatch {
+  name: string;
+  hex: string;
+}
+
+const COLOR_SWATCHES: ColorSwatch[] = [
+  { name: 'Pure Black', hex: '#000000' },
+  { name: 'Obsidian', hex: '#0a0d14' },
+  { name: 'Deep Navy', hex: '#0f1d40' },
+  { name: 'Dark Wine', hex: '#2b0a12' },
+  { name: 'Crimson', hex: '#c81e32' },
+  { name: 'Warm Gold', hex: '#d99b26' },
+  { name: 'Emerald Teal', hex: '#0f766e' },
+  { name: 'Violet', hex: '#6d28d9' },
+  { name: 'Light Paper', hex: '#f4f4f6' },
+];
+
 interface ControlHudProps {
   visible: boolean;
   trackPeekVisible: boolean;
+  isWeb: boolean;
   auth: AuthState;
   playback: PlaybackState | null;
   albumArtDataUrl: string | null;
@@ -39,9 +63,13 @@ interface ControlHudProps {
   preset: ShaderPresetId;
   layoutMode: LyricsLayoutMode;
   showCover: boolean;
+  letterSweep: boolean;
   audioEnabled: boolean;
   audioStatus: AudioCaptureStatus;
-  colorCycle: boolean;
+  showAudioMenu: boolean;
+  colorMode: ColorMode;
+  customColor: string;
+  showColorMenu: boolean;
   offsetMs: number;
   offsetToast: string | null;
   isFullscreen: boolean;
@@ -49,8 +77,14 @@ interface ControlHudProps {
   onSelectPreset: (preset: ShaderPresetId) => void;
   onCycleLayout: () => void;
   onToggleCover: () => void;
+  onToggleLetterSweep: () => void;
   onToggleAudio: () => void;
-  onToggleColorCycle: () => void;
+  onCloseAudioMenu: () => void;
+  onSelectWebAudioSource: (source: 'display' | 'mic' | 'off') => void;
+  onToggleColorMenu: () => void;
+  onCloseColorMenu: () => void;
+  onSelectColorMode: (mode: ColorMode) => void;
+  onChangeCustomColor: (hex: string) => void;
   onPlaybackControl: (action: PlaybackControlAction) => void;
   onNudgeOffset: (deltaMs: number) => void;
   onResetOffset: () => void;
@@ -70,6 +104,7 @@ function formatTime(ms: number): string {
 export function ControlHud({
   visible,
   trackPeekVisible,
+  isWeb,
   auth,
   playback,
   albumArtDataUrl,
@@ -77,9 +112,13 @@ export function ControlHud({
   preset,
   layoutMode,
   showCover,
+  letterSweep,
   audioEnabled,
   audioStatus,
-  colorCycle,
+  showAudioMenu,
+  colorMode,
+  customColor,
+  showColorMenu,
   offsetMs,
   offsetToast,
   isFullscreen,
@@ -87,8 +126,14 @@ export function ControlHud({
   onSelectPreset,
   onCycleLayout,
   onToggleCover,
+  onToggleLetterSweep,
   onToggleAudio,
-  onToggleColorCycle,
+  onCloseAudioMenu,
+  onSelectWebAudioSource,
+  onToggleColorMenu,
+  onCloseColorMenu,
+  onSelectColorMode,
+  onChangeCustomColor,
   onPlaybackControl,
   onNudgeOffset,
   onResetOffset,
@@ -97,6 +142,43 @@ export function ControlHud({
   onLogout,
   onClose,
 }: ControlHudProps) {
+  const colorPopoverRef = useRef<HTMLDivElement | null>(null);
+  const audioPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [hexDraft, setHexDraft] = useState(customColor);
+
+  useEffect(() => {
+    setHexDraft(customColor);
+  }, [customColor]);
+
+  // Close color popover when clicking anywhere outside of it
+  useEffect(() => {
+    if (!showColorMenu) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (colorPopoverRef.current && target && !colorPopoverRef.current.contains(target)) {
+        const el = target instanceof Element ? target.closest('[data-color-trigger="true"]') : null;
+        if (!el) {
+          onCloseColorMenu();
+        }
+      }
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => window.removeEventListener('pointerdown', handlePointerDown);
+  }, [showColorMenu, onCloseColorMenu]);
+
+  // Close web audio source popover when clicking anywhere outside of it
+  useEffect(() => {
+    if (!showAudioMenu) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (audioPopoverRef.current && target && !audioPopoverRef.current.contains(target)) {
+        onCloseAudioMenu();
+      }
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => window.removeEventListener('pointerdown', handlePointerDown);
+  }, [showAudioMenu, onCloseAudioMenu]);
+
   const track = playback?.track ?? null;
   const progressPct =
     track && track.durationMs > 0
@@ -105,16 +187,52 @@ export function ControlHud({
 
   const layoutLabel =
     layoutMode === 'focus'
-      ? 'Lyrics: Focus'
+      ? 'Focus'
       : layoutMode === 'cinema'
-        ? 'Lyrics: Cinema'
-        : 'Lyrics: Off';
+        ? 'Cinema'
+        : 'Off';
+
+  const colorButtonLabel =
+    colorMode === 'custom'
+      ? 'Custom'
+      : colorMode === 'album-lock'
+        ? 'Locked'
+        : 'Color';
+
+  const backlightLabel =
+    colorMode === 'custom'
+      ? `Custom ${customColor.toUpperCase()}`
+      : colorMode === 'album-lock'
+        ? 'Locked Album'
+        : 'Album Backlight';
 
   const isLiveRunning = audioEnabled && audioStatus === 'active';
   const formattedOffset = `${offsetMs >= 0 ? '+' : ''}${(offsetMs / 1000).toFixed(1)}s`;
 
   // Hide bottom track card peek when large album cover showcase is already showing on stage
   const showTrackCard = Boolean(track) && (visible || (trackPeekVisible && !showCover));
+
+  const handleHexInputChange = (raw: string) => {
+    setHexDraft(raw);
+    const cleaned = raw.trim().replace(/^#/, '');
+    if (/^[a-f0-9]{6}$/i.test(cleaned)) {
+      const normalized = `#${cleaned.toLowerCase()}`;
+      onChangeCustomColor(normalized);
+      if (colorMode !== 'custom') onSelectColorMode('custom');
+    }
+  };
+
+  const handleHexInputBlur = () => {
+    const cleaned = hexDraft.trim().replace(/^#/, '');
+    if (/^[a-f0-9]{6}$/i.test(cleaned)) {
+      const normalized = `#${cleaned.toLowerCase()}`;
+      setHexDraft(normalized);
+      onChangeCustomColor(normalized);
+      if (colorMode !== 'custom') onSelectColorMode('custom');
+    } else {
+      setHexDraft(customColor);
+    }
+  };
 
   return (
     <>
@@ -125,26 +243,93 @@ export function ControlHud({
         <div className={`hud-top ${visible ? 'is-visible' : 'is-hidden'}`}>
           <div className="hud-group">
             <div className="glass-pill">
-              <button
-                className={`hud-btn ${audioEnabled ? 'active' : ''}`}
-                onClick={onToggleAudio}
-                title="Toggle live Windows audio reactivity (A)"
-              >
-                {isLiveRunning ? (
-                  <span className="mini-eq" aria-hidden="true">
-                    <span className="mini-eq-bar b0" />
-                    <span className="mini-eq-bar b1" />
-                    <span className="mini-eq-bar b2" />
-                    <span className="mini-eq-bar b3" />
-                    <span className="mini-eq-bar b4" />
+              <div className="audio-picker-wrap" ref={audioPopoverRef}>
+                <button
+                  className={`hud-btn ${isLiveRunning || showAudioMenu || (!isWeb && audioEnabled) ? 'active' : ''}`}
+                  onClick={onToggleAudio}
+                  title={
+                    isWeb
+                      ? 'Choose browser live audio source (A)'
+                      : 'Toggle live Windows audio reactivity (A)'
+                  }
+                >
+                  {isLiveRunning ? (
+                    <span className="mini-eq" aria-hidden="true">
+                      <span className="mini-eq-bar b0" />
+                      <span className="mini-eq-bar b1" />
+                      <span className="mini-eq-bar b2" />
+                      <span className="mini-eq-bar b3" />
+                      <span className="mini-eq-bar b4" />
+                    </span>
+                  ) : (
+                    <VolumeX size={14} />
+                  )}
+                  <span>
+                    {isLiveRunning
+                      ? 'Live Audio'
+                      : isWeb
+                        ? 'Ambient'
+                        : !audioEnabled
+                          ? 'Audio Off'
+                          : 'Ambient'}
                   </span>
-                ) : (
-                  <VolumeX size={14} />
+                </button>
+
+                {isWeb && showAudioMenu && (
+                  <div className="audio-popover" onClick={(e) => e.stopPropagation()}>
+                    <div className="color-popover-header">
+                      <span>Browser Live Audio</span>
+                      <button
+                        className="hud-btn icon-only"
+                        style={{ width: 24, height: 24 }}
+                        onClick={onCloseAudioMenu}
+                        title="Close audio menu"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+
+                    <button
+                      className="audio-source-btn"
+                      onClick={() => onSelectWebAudioSource('display')}
+                    >
+                      <Monitor size={15} />
+                      <div className="audio-source-copy">
+                        <span className="audio-source-title">Tab / Screen Audio</span>
+                        <span className="audio-source-sub">
+                          Best with a Spotify Web Player tab
+                        </span>
+                      </div>
+                    </button>
+
+                    <button
+                      className="audio-source-btn"
+                      onClick={() => onSelectWebAudioSource('mic')}
+                    >
+                      <Mic size={15} />
+                      <div className="audio-source-copy">
+                        <span className="audio-source-title">Microphone / Line-In</span>
+                        <span className="audio-source-sub">
+                          Works with speakers or virtual audio cables
+                        </span>
+                      </div>
+                    </button>
+
+                    <button
+                      className={`audio-source-btn ${!isLiveRunning ? 'is-active' : ''}`}
+                      onClick={() => onSelectWebAudioSource('off')}
+                    >
+                      <VolumeX size={15} />
+                      <div className="audio-source-copy">
+                        <span className="audio-source-title">Ambient Only</span>
+                        <span className="audio-source-sub">
+                          Smooth automatic breathing motion
+                        </span>
+                      </div>
+                    </button>
+                  </div>
                 )}
-                <span>
-                  {!audioEnabled ? 'Audio Off' : isLiveRunning ? 'Live Audio' : 'Ambient'}
-                </span>
-              </button>
+              </div>
             </div>
 
             <div className="glass-pill">
@@ -167,7 +352,7 @@ export function ControlHud({
               <button
                 className="hud-btn"
                 onClick={onCycleLayout}
-                title="Cycle lyrics layout (M)"
+                title="Cycle lyrics layout: Focus / Cinema / Off (M)"
               >
                 {layoutMode === 'hidden' ? (
                   <EyeOff size={14} />
@@ -180,6 +365,15 @@ export function ControlHud({
               </button>
 
               <button
+                className={`hud-btn ${letterSweep ? 'active' : ''}`}
+                onClick={onToggleLetterSweep}
+                title="Toggle smooth letter-by-letter lyric progression & jump (L)"
+              >
+                <Type size={14} />
+                <span>Sweep</span>
+              </button>
+
+              <button
                 className={`hud-btn ${showCover ? 'active' : ''}`}
                 onClick={onToggleCover}
                 title="Show / hide album cover alongside lyrics (V)"
@@ -188,18 +382,125 @@ export function ControlHud({
                 <span>Cover</span>
               </button>
 
-              <button
-                className={`hud-btn ${!colorCycle ? 'active' : ''}`}
-                onClick={onToggleColorCycle}
-                title={
-                  colorCycle
-                    ? 'Cycling through album cover colors — click to lock primary album color (C)'
-                    : 'Locked to primary album cover color — click to cycle album colors (C)'
-                }
-              >
-                {colorCycle ? <Palette size={14} /> : <Lock size={14} />}
-                <span>{colorCycle ? 'Album Cycle' : 'Color Lock'}</span>
-              </button>
+              <div className="color-picker-wrap" ref={colorPopoverRef}>
+                <button
+                  className={`hud-btn ${showColorMenu || colorMode !== 'album-cycle' ? 'active' : ''}`}
+                  onClick={onToggleColorMenu}
+                  title="Choose background color or album color mode (C to cycle)"
+                  data-color-trigger="true"
+                >
+                  <span
+                    className="hud-color-dot"
+                    style={
+                      colorMode === 'custom'
+                        ? { background: customColor }
+                        : undefined
+                    }
+                  />
+                  <span>{colorButtonLabel}</span>
+                </button>
+
+                {showColorMenu && (
+                  <div
+                    className="color-popover"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="color-popover-header">
+                      <span>Background Color</span>
+                      <button
+                        className="hud-btn icon-only"
+                        style={{ width: 24, height: 24 }}
+                        onClick={onCloseColorMenu}
+                        title="Close color picker"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+
+                    <div className="color-mode-row">
+                      <button
+                        className={`color-mode-btn ${colorMode === 'album-cycle' ? 'active' : ''}`}
+                        onClick={() => onSelectColorMode('album-cycle')}
+                      >
+                        <Palette size={13} />
+                        <span>Album Cycle</span>
+                      </button>
+                      <button
+                        className={`color-mode-btn ${colorMode === 'album-lock' ? 'active' : ''}`}
+                        onClick={() => onSelectColorMode('album-lock')}
+                      >
+                        <Lock size={13} />
+                        <span>Album Lock</span>
+                      </button>
+                      <button
+                        className={`color-mode-btn ${colorMode === 'custom' ? 'active' : ''}`}
+                        onClick={() => onSelectColorMode('custom')}
+                      >
+                        <Pipette size={13} />
+                        <span>Custom</span>
+                      </button>
+                    </div>
+
+                    <div className="color-section-label">Quick Swatches</div>
+                    <div className="swatch-grid">
+                      {COLOR_SWATCHES.map((swatch) => {
+                        const isSelected =
+                          colorMode === 'custom' &&
+                          customColor.toLowerCase() === swatch.hex.toLowerCase();
+                        return (
+                          <button
+                            key={swatch.hex}
+                            className={`swatch-btn ${isSelected ? 'is-selected' : ''}`}
+                            style={{ background: swatch.hex }}
+                            title={`${swatch.name} (${swatch.hex.toUpperCase()})`}
+                            onClick={() => {
+                              onChangeCustomColor(swatch.hex);
+                              onSelectColorMode('custom');
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+
+                    <div className="hex-input-row">
+                      <label
+                        className="native-color-wrap"
+                        title="Pick any custom background color"
+                      >
+                        <input
+                          type="color"
+                          className="native-color-input"
+                          value={customColor}
+                          onChange={(e) => {
+                            onChangeCustomColor(e.target.value.toLowerCase());
+                            if (colorMode !== 'custom') onSelectColorMode('custom');
+                          }}
+                        />
+                        <span
+                          className="native-color-preview"
+                          style={{ background: customColor }}
+                        />
+                      </label>
+                      <input
+                        type="text"
+                        className="hex-text-input"
+                        value={hexDraft}
+                        onChange={(e) => handleHexInputChange(e.target.value)}
+                        onBlur={handleHexInputBlur}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            (e.currentTarget as HTMLInputElement).blur();
+                          }
+                        }}
+                        spellCheck={false}
+                        maxLength={7}
+                        placeholder="#0a0d14"
+                        aria-label="Custom background hex color"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <button
                 className="hud-btn icon-only"
@@ -234,13 +535,15 @@ export function ControlHud({
               >
                 <LogOut size={14} />
               </button>
-              <button
-                className="hud-btn icon-only danger"
-                onClick={onClose}
-                title="Close Spotify Visualizer"
-              >
-                <X size={15} />
-              </button>
+              {!isWeb && (
+                <button
+                  className="hud-btn icon-only danger"
+                  onClick={onClose}
+                  title="Close Spotify Visualizer"
+                >
+                  <X size={15} />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -317,15 +620,22 @@ export function ControlHud({
           </div>
 
           <div className={`tuning-panel ${visible ? '' : 'is-hidden'}`}>
-            <div
-              className="backlight-swatch-wrap"
-              title="Live album color driving your backlight (auto-regulated pulse)"
+            <button
+              className="backlight-swatch-btn"
+              onClick={onToggleColorMenu}
+              title="Open background color picker"
+              data-color-trigger="true"
             >
-              <span className="backlight-swatch" />
-              <span className="backlight-label">
-                {colorCycle ? 'Album Backlight' : 'Locked Album Color'}
-              </span>
-            </div>
+              <span
+                className="backlight-swatch"
+                style={
+                  colorMode === 'custom'
+                    ? { background: customColor }
+                    : undefined
+                }
+              />
+              <span className="backlight-label">{backlightLabel}</span>
+            </button>
 
             <div className="divider-v" />
 
@@ -383,20 +693,25 @@ export function ControlHud({
                 </span>
               </div>
               <div className="shortcut-row">
-                <span>Switch Shader Style</span>
+                <span>Switch Background Style (5 = Blank)</span>
                 <span className="kbd-group">
                   <kbd className="kbd">1</kbd>
                   <kbd className="kbd">2</kbd>
                   <kbd className="kbd">3</kbd>
                   <kbd className="kbd">4</kbd>
+                  <kbd className="kbd">5</kbd>
                 </span>
+              </div>
+              <div className="shortcut-row">
+                <span>Toggle Letter-by-Letter Sweep</span>
+                <kbd className="kbd">L</kbd>
               </div>
               <div className="shortcut-row">
                 <span>Show / Hide Album Cover</span>
                 <kbd className="kbd">V</kbd>
               </div>
               <div className="shortcut-row">
-                <span>Toggle Album Color Cycle vs Color Lock</span>
+                <span>Cycle Color Mode (Album / Lock / Custom)</span>
                 <kbd className="kbd">C</kbd>
               </div>
               <div className="shortcut-row">

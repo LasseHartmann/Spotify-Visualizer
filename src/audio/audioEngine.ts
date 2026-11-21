@@ -1,4 +1,5 @@
 import type { NativeAudioPacket } from '@shared/types';
+import { isWebPlatform } from '@/platform/webBridge';
 import { AudioDsp, type AudioFrame } from './dsp';
 
 export type { AudioFrame } from './dsp';
@@ -6,11 +7,13 @@ export type { AudioFrame } from './dsp';
 export type AudioCaptureStatus = 'idle' | 'starting' | 'active' | 'error';
 
 /**
- * Streams real-time Windows system audio via our native WASAPI loopback helper
- * (automatically follows the Windows default playback device across 2ch/5.1/7.1 headsets & speakers).
+ * Streams real-time audio via either:
+ * - Electron: native Windows WASAPI loopback helper (2ch / 5.1 / 7.1 headsets & speakers)
+ * - Web: browser Tab/Screen Share (getDisplayMedia) or Microphone (getUserMedia) AnalyserNode
  */
 export class AudioEngine {
   private unsubNativeFrame: (() => void) | null = null;
+  private unsubNativeStopped: (() => void) | null = null;
   private latestNativePacket: NativeAudioPacket | null = null;
   private lastNativePacketAtMs = 0;
 
@@ -35,14 +38,18 @@ export class AudioEngine {
     this.enabled = enabled;
     if (!enabled) {
       this.stopCapture();
-    } else if (this.status !== 'active' && this.status !== 'starting') {
-      void this.startCapture();
+    } else if (!isWebPlatform() && this.status !== 'active' && this.status !== 'starting') {
+      void this.startCapture('default');
     }
   }
 
-  public async startCapture(): Promise<boolean> {
-    if (!this.enabled) return false;
-    if (this.status === 'starting' || this.status === 'active') return true;
+  public async startCapture(source = 'default'): Promise<boolean> {
+    if (!this.enabled) {
+      this.enabled = true;
+    }
+    if (source === 'default' && (this.status === 'starting' || this.status === 'active')) {
+      return true;
+    }
 
     this.stopCapture();
     this.setStatus('starting');
@@ -57,7 +64,13 @@ export class AudioEngine {
         this.lastNativePacketAtMs = performance.now();
       });
 
-      const ok = await window.visualizer.audio.startTap('default');
+      if (window.visualizer.audio.onStopped) {
+        this.unsubNativeStopped = window.visualizer.audio.onStopped(() => {
+          this.stopCapture();
+        });
+      }
+
+      const ok = await window.visualizer.audio.startTap(source);
       if (!ok) {
         this.stopCapture();
         this.setStatus('error');
@@ -77,6 +90,10 @@ export class AudioEngine {
     if (this.unsubNativeFrame) {
       this.unsubNativeFrame();
       this.unsubNativeFrame = null;
+    }
+    if (this.unsubNativeStopped) {
+      this.unsubNativeStopped();
+      this.unsubNativeStopped = null;
     }
     this.latestNativePacket = null;
     this.lastNativePacketAtMs = 0;

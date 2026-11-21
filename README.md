@@ -8,16 +8,17 @@ A full-screen Windows desktop visualizer that pairs real-time **audio-reactive W
 
 ## Features
 
-* **4 Audio-Reactive, Backlight-Optimized WebGL2 Styles (`1`–`4`):**
-  1. **Pulse Wash** — Flowing concert wall wash with concentric kick shockwaves & live FFT curtains
-  2. **Bass Eclipse** — High-contrast dark stage with a 64-spoke 360° radial FFT ring & explosive beat flares
-  3. **Chromatic Tide** — Edge-to-edge living dual-tone audio waveform & bass energy tides
-  4. **Spectrum Wall** — 48 full-bleed kinetic frequency pillars
-* **True Album Cover Color Fidelity:** Preserves real jet-black negative space, neutral white/silver, warm gold, and chromatic accents without injecting fake blue/green tints onto dark or black-and-white covers. Press `C` to switch between **Album Cycle** and **Color Lock**.
+* **4 Calm, Audio-Reactive WebGL2 Styles + Blank Mode (`1`–`5`):**
+  1. **Pulse Wash** — Smooth concert wall wash with gentle beat bloom & live FFT curtains
+  2. **Bass Eclipse** — High-contrast dark stage with a calm 64-spoke 360° radial FFT halo
+  3. **Chromatic Tide** — Edge-to-edge silky dual-tone audio waveform & bass energy tides
+  4. **Spectrum Wall** — 48 full-bleed fluid frequency pillars
+  5. **Blank** — Clean solid-color background with zero shader motion (great for pure lyrics focus)
+* **True Album Cover Colors + Custom Background Color Picker (`C`):** Preserves real jet-black negative space, neutral white/silver, warm gold, and chromatic accents without injecting fake blue/green tints onto dark or black-and-white covers. Choose **Album Cycle**, **Album Lock**, or pick any **Custom Color** (quick swatches, color wheel, or `#HEX` input—with automatic dark-ink contrast on light Blank backgrounds).
 * **Native Windows WASAPI Audio Loopback:** Uses a lightweight bundled Windows Core Audio helper (`wasapi-tap.exe`) so real-time audio reactivity works out of the box across stereo speakers, Bluetooth, Dolby Atmos, and **5.1 / 7.1 surround gaming headsets**—with zero screen-capture border and automatic device switching.
 * **Adaptive Auto-Gain & Self-Regulating Pulse:** Automatically normalizes volume levels and adjusts beat pulse intensity from chill acoustic songs to heavy drops.
 * **Non-Overlapping Album Cover Showcase (`V`):** Optionally displays the album artwork cleanly alongside Focus lyrics, above Cinema subtitles, or centered over pure shaders.
-* **Synced Lyrics via LRCLIB:** Line-synced and enhanced word-synced lyrics with 60 FPS clock interpolation, local caching, and per-track `±100ms` timing nudges (`[` / `]`).
+* **Synced Lyrics with Letter-by-Letter Sweep & Hop (`L`):** Line-synced and enhanced word-synced lyrics via LRCLIB with 60 FPS clock interpolation, a smooth left-to-right loading-bar fill sweeping through each letter as it subtly lifts (ON by default, toggleable via **Sweep** or `L`), local caching, and per-track `±100ms` timing nudges (`[` / `]`).
 * **Built-In Music Controls:** Previous, Play/Pause, and Next controls (`Space`, `←`, `→`) using Spotify's Web API with automatic native Windows media-key fallback.
 
 ---
@@ -40,7 +41,22 @@ A full-screen Windows desktop visualizer that pairs real-time **audio-reactive W
 ### Sharing Your Client ID with Friends
 Spotify Development Mode allows up to **5 Spotify accounts** per Client ID (your friends do **not** need Spotify Premium):
 1. In your [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → **Settings → User Management**, add up to 4 friends' Spotify email addresses.
-2. Share `Spotify Visualizer.exe` and your Client ID with them—they paste it once and sign in with their own Spotify account.
+2. Share `Spotify Visualizer.exe` (or your Vercel link below) and your Client ID with them—they paste it once and sign in with their own Spotify account.
+
+---
+
+## Web App (Deploy on Vercel)
+
+The exact same repository also deploys directly to **Vercel** as a zero-backend static web app (`vercel.json` is preconfigured):
+
+1. Import **`LasseHartmann/Spotify-Visualizer`** in [Vercel](https://vercel.com/new) and click **Deploy** *(no extra settings required—Vercel automatically skips Electron binary downloads and runs `npm run build:web`)*.
+2. In your [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → **Settings → Redirect URIs**, add your Vercel callback URL:
+   ```text
+   https://<your-vercel-domain>/callback
+   ```
+3. Open your Vercel site, paste your **Client ID**, and click **Connect with Spotify**.
+   * *(Optional: to prefill a Client ID for your own private Vercel deployment, add `VITE_SPOTIFY_CLIENT_ID` in Vercel Project Settings → Environment Variables.)*
+   * **Browser Audio Note:** In the browser version, click **Ambient** in the top-left pill to enable **Tab / Screen Audio** *(best with Spotify Web Player)* or **Microphone / Line-In**. For automatic system-wide audio across speakers and 5.1/7.1 headsets with zero prompts, use the Windows `.exe`.
 
 ---
 
@@ -50,9 +66,10 @@ Spotify Development Mode allows up to **5 Spotify accounts** per Client ID (your
 | --- | --- |
 | `Space` | Play / Pause music |
 | `←` / `→` | Previous / Next track |
-| `1` – `4` | Switch shader style (`Pulse Wash`, `Bass Eclipse`, `Chromatic Tide`, `Spectrum Wall`) |
+| `1` – `5` | Switch background style (`Pulse Wash`, `Bass Eclipse`, `Chromatic Tide`, `Spectrum Wall`, `Blank`) |
+| `L` | Toggle letter-by-letter lyric progression & jump |
 | `V` | Show / hide album cover showcase |
-| `C` | Toggle **Album Cycle** vs **Color Lock** |
+| `C` | Cycle color mode (**Album Cycle** / **Album Lock** / **Custom**) |
 | `M` | Cycle lyrics mode (`Focus` / `Cinema` / `Off`) |
 | `A` | Toggle live Windows audio reactivity |
 | `[` / `]` | Nudge lyric sync `-100ms` / `+100ms` (saved per track) |

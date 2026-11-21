@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AuthState,
+  ColorMode,
   LyricsLayoutMode,
   LyricsResult,
   PlaybackControlAction,
@@ -11,11 +12,19 @@ import type {
 } from '@shared/types';
 import type { AudioCaptureStatus, AudioEngine } from '@/audio/audioEngine';
 import { parseLrc } from '@/lib/lrcParser';
-import { DEFAULT_PALETTE, extractPaletteFromDataUrl, rgbToCss } from '@/lib/palette';
+import {
+  DEFAULT_PALETTE,
+  extractPaletteFromDataUrl,
+  isLightColor,
+  paletteFromCustomHex,
+  parseHexColor,
+  rgbToCss,
+} from '@/lib/palette';
 import { ShaderCanvas } from '@/components/ShaderCanvas';
 import { LoginScreen } from '@/components/LoginScreen';
 import { LyricsOverlay } from '@/components/LyricsOverlay';
 import { ControlHud } from '@/components/ControlHud';
+import { isWebPlatform } from '@/platform/webBridge';
 
 const INITIAL_AUTH: AuthState = {
   isAuthenticated: false,
@@ -28,10 +37,17 @@ const INITIAL_AUTH: AuthState = {
 };
 
 const LAYOUT_CYCLE: LyricsLayoutMode[] = ['focus', 'cinema', 'hidden'];
+const COLOR_MODE_CYCLE: ColorMode[] = ['album-cycle', 'album-lock', 'custom'];
 
 function loadSavedPreset(): ShaderPresetId {
   const saved = localStorage.getItem('sv:preset:v2');
-  if (saved === 'pulse' || saved === 'eclipse' || saved === 'tide' || saved === 'spectrum') {
+  if (
+    saved === 'pulse' ||
+    saved === 'eclipse' ||
+    saved === 'tide' ||
+    saved === 'spectrum' ||
+    saved === 'blank'
+  ) {
     return saved;
   }
   return 'pulse';
@@ -45,9 +61,27 @@ function loadSavedLayout(): LyricsLayoutMode {
   return 'focus';
 }
 
-function loadSavedColorCycle(): boolean {
-  const saved = localStorage.getItem('sv:colorCycle');
+function loadSavedLetterSweep(): boolean {
+  const saved = localStorage.getItem('sv:letterSweep');
   return saved === null ? true : saved === '1';
+}
+
+function loadSavedColorMode(): ColorMode {
+  const saved = localStorage.getItem('sv:colorMode');
+  if (saved === 'album-cycle' || saved === 'album-lock' || saved === 'custom') {
+    return saved;
+  }
+  const legacy = localStorage.getItem('sv:colorCycle');
+  if (legacy === '0') return 'album-lock';
+  return 'album-cycle';
+}
+
+function loadSavedCustomColor(): string {
+  const saved = localStorage.getItem('sv:customColor');
+  if (saved && /^#[a-f0-9]{6}$/i.test(saved)) {
+    return saved.toLowerCase();
+  }
+  return '#0a0d14';
 }
 
 function loadSavedShowCover(): boolean {
@@ -69,17 +103,22 @@ export function App() {
   const [palette, setPalette] = useState<ThemePalette>(DEFAULT_PALETTE);
   const [albumArtDataUrl, setAlbumArtDataUrl] = useState<string | null>(null);
 
+  const isWeb = isWebPlatform();
   const [preset, setPreset] = useState<ShaderPresetId>(loadSavedPreset);
   const [layoutMode, setLayoutMode] = useState<LyricsLayoutMode>(loadSavedLayout);
   const [showCover, setShowCover] = useState<boolean>(loadSavedShowCover);
-  const [audioEnabled, setAudioEnabled] = useState(true);
+  const [letterSweep, setLetterSweep] = useState<boolean>(loadSavedLetterSweep);
+  const [audioEnabled, setAudioEnabled] = useState(!isWeb);
   const [audioStatus, setAudioStatus] = useState<AudioCaptureStatus>('idle');
-  const [colorCycle, setColorCycle] = useState(loadSavedColorCycle);
+  const [colorMode, setColorMode] = useState<ColorMode>(loadSavedColorMode);
+  const [customColor, setCustomColor] = useState<string>(loadSavedCustomColor);
 
-  const [isFullscreen, setIsFullscreen] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(!isWeb);
   const [hudVisible, setHudVisible] = useState(true);
   const [trackPeekVisible, setTrackPeekVisible] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showColorMenu, setShowColorMenu] = useState(false);
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
 
   const audioEngineRef = useRef<AudioEngine | null>(null);
   const latestTrackRef = useRef<TrackInfo | null>(null);
@@ -104,11 +143,23 @@ export function App() {
     return [];
   }, [lyricsResult]);
 
+  const effectivePalette = useMemo(
+    () => (colorMode === 'custom' ? paletteFromCustomHex(customColor) : palette),
+    [colorMode, customColor, palette]
+  );
+
+  const blankColor = useMemo(
+    () => (colorMode === 'custom' ? parseHexColor(customColor) : palette.backdrop),
+    [colorMode, customColor, palette.backdrop]
+  );
+
+  const isLightBackdrop = preset === 'blank' && isLightColor(blankColor);
+
   useEffect(() => {
     const root = document.documentElement.style;
-    root.setProperty('--accent', rgbToCss(palette.color1));
-    root.setProperty('--accent-soft', rgbToCss(palette.color1, 0.3));
-  }, [palette]);
+    root.setProperty('--accent', rgbToCss(effectivePalette.color1));
+    root.setProperty('--accent-soft', rgbToCss(effectivePalette.color1, 0.3));
+  }, [effectivePalette]);
 
   useEffect(() => {
     let active = true;
@@ -240,25 +291,36 @@ export function App() {
     };
   }, [auth.isAuthenticated]);
 
-  // Smooth ~30 FPS clock tick for lyric progression & progress bar
+  // Smooth 60 FPS clock tick while playing so letter-by-letter sweep & hop animate silky smooth
   useEffect(() => {
     if (!auth.isAuthenticated) return;
     let rafId = 0;
-    let lastEmit = 0;
+    let lastEmittedMs = -1;
+    let lastIdleCheck = 0;
 
     const tick = (now: number) => {
       rafId = requestAnimationFrame(tick);
-      if (now - lastEmit < 32) return;
-      lastEmit = now;
 
       const clk = clockRef.current;
       if (!clk.trackId) {
-        setCurrentMs(0);
+        if (lastEmittedMs !== 0) {
+          lastEmittedMs = 0;
+          setCurrentMs(0);
+        }
         return;
       }
+
+      if (!clk.isPlaying) {
+        if (now - lastIdleCheck < 100) return;
+        lastIdleCheck = now;
+      }
+
       const elapsed = clk.isPlaying ? now - clk.anchorPerfMs : 0;
       const computed = Math.max(0, Math.min(clk.durationMs, clk.anchorProgressMs + elapsed));
-      setCurrentMs(computed);
+      if (Math.abs(computed - lastEmittedMs) >= 0.5) {
+        lastEmittedMs = computed;
+        setCurrentMs(computed);
+      }
     };
 
     rafId = requestAnimationFrame(tick);
@@ -346,12 +408,33 @@ export function App() {
     });
   }, []);
 
-  const toggleColorCycle = useCallback(() => {
-    setColorCycle((prev) => {
+  const toggleLetterSweep = useCallback(() => {
+    setLetterSweep((prev) => {
       const next = !prev;
-      localStorage.setItem('sv:colorCycle', next ? '1' : '0');
+      localStorage.setItem('sv:letterSweep', next ? '1' : '0');
       return next;
     });
+  }, []);
+
+  const selectColorMode = useCallback((next: ColorMode) => {
+    setColorMode(next);
+    localStorage.setItem('sv:colorMode', next);
+  }, []);
+
+  const cycleColorMode = useCallback(() => {
+    setColorMode((prev) => {
+      const next =
+        COLOR_MODE_CYCLE[(COLOR_MODE_CYCLE.indexOf(prev) + 1) % COLOR_MODE_CYCLE.length];
+      localStorage.setItem('sv:colorMode', next);
+      return next;
+    });
+  }, []);
+
+  const changeCustomColor = useCallback((hex: string) => {
+    const normalized = hex.trim().toLowerCase();
+    if (!/^#[a-f0-9]{6}$/.test(normalized)) return;
+    setCustomColor(normalized);
+    localStorage.setItem('sv:customColor', normalized);
   }, []);
 
   const flashOffsetToast = useCallback((ms: number) => {
@@ -414,22 +497,65 @@ export function App() {
     window.setTimeout(() => pollNowRef.current?.(), 950);
   }, []);
 
+  const flashToast = useCallback((label: string, durationMs = 2200) => {
+    setOffsetToast(label);
+    if (offsetToastTimeoutRef.current) window.clearTimeout(offsetToastTimeoutRef.current);
+    offsetToastTimeoutRef.current = window.setTimeout(() => {
+      setOffsetToast(null);
+    }, durationMs);
+  }, []);
+
+  const handleToggleAudio = useCallback(() => {
+    if (isWeb) {
+      setShowAudioMenu((v) => !v);
+      revealHud();
+    } else {
+      setAudioEnabled((v) => !v);
+    }
+  }, [isWeb, revealHud]);
+
+  const handleSelectWebAudioSource = useCallback(
+    async (source: 'display' | 'mic' | 'off') => {
+      setShowAudioMenu(false);
+      if (source === 'off') {
+        setAudioEnabled(false);
+        audioEngineRef.current?.stopCapture();
+        return;
+      }
+
+      setAudioEnabled(true);
+      const ok = await audioEngineRef.current?.startCapture(source);
+      if (!ok) {
+        setAudioEnabled(false);
+        flashToast(
+          source === 'display'
+            ? 'No tab/screen audio shared — try sharing a Spotify Web Player tab or use Microphone'
+            : 'Microphone permission was not granted',
+          3600
+        );
+      }
+    },
+    [flashToast]
+  );
+
   const handleLogin = useCallback(
     async (clientId: string) => {
       setAuth((prev) => ({ ...prev, isAuthenticating: true, error: null, errorCode: null }));
-      if (audioEnabled && audioStatus !== 'active') {
-        void audioEngineRef.current?.startCapture();
+      if (!isWeb && audioEnabled && audioStatus !== 'active') {
+        void audioEngineRef.current?.startCapture('default');
       }
       const nextAuth = await window.visualizer.auth.login(clientId);
       setAuth(nextAuth);
     },
-    [audioEnabled, audioStatus]
+    [audioEnabled, audioStatus, isWeb]
   );
 
   const handleLogout = useCallback(async () => {
     const nextAuth = await window.visualizer.auth.logout();
     setAuth(nextAuth);
     setShowShortcuts(false);
+    setShowColorMenu(false);
+    setShowAudioMenu(false);
   }, []);
 
   const handleToggleFullscreen = useCallback(async () => {
@@ -455,7 +581,11 @@ export function App() {
       }
 
       if (e.key === 'Escape') {
-        if (showShortcuts) {
+        if (showColorMenu) {
+          setShowColorMenu(false);
+        } else if (showAudioMenu) {
+          setShowAudioMenu(false);
+        } else if (showShortcuts) {
           setShowShortcuts(false);
         } else if (isFullscreen) {
           void window.visualizer.window.setFullscreen(false);
@@ -497,6 +627,15 @@ export function App() {
           selectPreset('spectrum');
           revealHud();
           break;
+        case '5':
+          selectPreset('blank');
+          revealHud();
+          break;
+        case 'l':
+        case 'L':
+          toggleLetterSweep();
+          revealHud();
+          break;
         case 'v':
         case 'V':
           toggleCover();
@@ -504,7 +643,7 @@ export function App() {
           break;
         case 'c':
         case 'C':
-          toggleColorCycle();
+          cycleColorMode();
           revealHud();
           break;
         case 'm':
@@ -514,7 +653,7 @@ export function App() {
           break;
         case 'a':
         case 'A':
-          setAudioEnabled((v) => !v);
+          handleToggleAudio();
           revealHud();
           break;
         case '[':
@@ -538,29 +677,41 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     auth.isAuthenticated,
+    cycleColorMode,
     cycleLayout,
     handlePlaybackControl,
+    handleToggleAudio,
     handleToggleFullscreen,
     isFullscreen,
     nudgeOffset,
     resetOffset,
     revealHud,
     selectPreset,
+    showAudioMenu,
+    showColorMenu,
     showShortcuts,
-    toggleColorCycle,
     toggleCover,
+    toggleLetterSweep,
   ]);
 
   const effectiveLyricTimeMs = Math.max(0, currentMs + offsetMs);
-  const hideCursor = auth.isAuthenticated && !hudVisible && !showShortcuts;
+  const hideCursor =
+    auth.isAuthenticated &&
+    !hudVisible &&
+    !showShortcuts &&
+    !showColorMenu &&
+    !showAudioMenu;
 
   return (
-    <div className={`app-root ${hideCursor ? 'cursor-hidden' : ''}`}>
+    <div
+      className={`app-root ${hideCursor ? 'cursor-hidden' : ''} ${isLightBackdrop ? 'light-backdrop' : ''}`}
+    >
       <ShaderCanvas
         preset={preset}
-        palette={palette}
+        palette={effectivePalette}
+        blankColor={blankColor}
         audioEnabled={audioEnabled}
-        colorCycle={colorCycle}
+        colorMode={colorMode}
         isPlaying={Boolean(playback?.isPlaying)}
         onAudioStatusChange={setAudioStatus}
         audioEngineRef={audioEngineRef}
@@ -584,12 +735,14 @@ export function App() {
             currentMs={effectiveLyricTimeMs}
             layoutMode={layoutMode}
             showCover={showCover}
+            letterSweep={letterSweep}
             isLoadingLyrics={isLoadingLyrics}
           />
 
           <ControlHud
-            visible={hudVisible || showShortcuts}
+            visible={hudVisible || showShortcuts || showColorMenu || showAudioMenu}
             trackPeekVisible={trackPeekVisible}
+            isWeb={isWeb}
             auth={auth}
             playback={playback}
             albumArtDataUrl={albumArtDataUrl}
@@ -597,9 +750,13 @@ export function App() {
             preset={preset}
             layoutMode={layoutMode}
             showCover={showCover}
+            letterSweep={letterSweep}
             audioEnabled={audioEnabled}
             audioStatus={audioStatus}
-            colorCycle={colorCycle}
+            showAudioMenu={showAudioMenu}
+            colorMode={colorMode}
+            customColor={customColor}
+            showColorMenu={showColorMenu}
             offsetMs={offsetMs}
             offsetToast={offsetToast}
             isFullscreen={isFullscreen}
@@ -607,8 +764,17 @@ export function App() {
             onSelectPreset={selectPreset}
             onCycleLayout={cycleLayout}
             onToggleCover={toggleCover}
-            onToggleAudio={() => setAudioEnabled((v) => !v)}
-            onToggleColorCycle={toggleColorCycle}
+            onToggleLetterSweep={toggleLetterSweep}
+            onToggleAudio={handleToggleAudio}
+            onCloseAudioMenu={() => setShowAudioMenu(false)}
+            onSelectWebAudioSource={(src) => void handleSelectWebAudioSource(src)}
+            onToggleColorMenu={() => {
+              setShowColorMenu((v) => !v);
+              revealHud();
+            }}
+            onCloseColorMenu={() => setShowColorMenu(false)}
+            onSelectColorMode={selectColorMode}
+            onChangeCustomColor={changeCustomColor}
             onPlaybackControl={(action) => void handlePlaybackControl(action)}
             onNudgeOffset={nudgeOffset}
             onResetOffset={resetOffset}

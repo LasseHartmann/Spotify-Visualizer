@@ -1,4 +1,6 @@
-export type ShaderPresetId = 'pulse' | 'eclipse' | 'tide' | 'spectrum';
+export type ShaderPresetId = 'pulse' | 'eclipse' | 'tide' | 'spectrum' | 'blank';
+
+export type ColorMode = 'album-cycle' | 'album-lock' | 'custom';
 
 export type LyricsLayoutMode = 'focus' | 'cinema' | 'hidden';
 
@@ -84,6 +86,7 @@ export interface NativeAudioPacket {
 }
 
 export interface VisualizerApi {
+  platform?: 'electron' | 'web';
   auth: {
     getState: () => Promise<AuthState>;
     setClientId: (clientId: string) => Promise<AuthState>;
@@ -104,6 +107,7 @@ export interface VisualizerApi {
     startTap: (deviceId: string) => Promise<boolean>;
     stopTap: () => Promise<void>;
     onFrame: (callback: (packet: NativeAudioPacket) => void) => () => void;
+    onStopped?: (callback: () => void) => () => void;
   };
   window: {
     toggleFullscreen: () => Promise<boolean>;

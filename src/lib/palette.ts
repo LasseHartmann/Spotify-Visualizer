@@ -367,3 +367,64 @@ export function rgbToCss(rgb: RGB, alpha = 1): string {
   const b = Math.round(clamp(rgb.b, 0, 1) * 255);
   return alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+export function parseHexColor(hex: string): RGB {
+  const cleaned = hex.trim().replace(/^#/, '');
+  if (!/^[a-f0-9]{6}$/i.test(cleaned)) {
+    return { r: 0.04, g: 0.05, b: 0.08 };
+  }
+  return {
+    r: parseInt(cleaned.slice(0, 2), 16) / 255,
+    g: parseInt(cleaned.slice(2, 4), 16) / 255,
+    b: parseInt(cleaned.slice(4, 6), 16) / 255,
+  };
+}
+
+export function isLightColor(rgb: RGB): boolean {
+  const lum = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b;
+  return lum > 0.62;
+}
+
+/**
+ * Builds a clean, faithful shader & blank-background palette from a user-selected hex color.
+ * Keeps the exact chosen hue/shade intact (including pure black, neutral charcoal/white, or vivid colors).
+ */
+export function paletteFromCustomHex(hex: string): ThemePalette {
+  const rgb = parseHexColor(hex);
+  const [h, s, l] = rgbToHsl(rgb.r, rgb.g, rgb.b);
+
+  // Near-black custom color: pure dark backdrop with understated neutral silver accents
+  if (l < 0.09) {
+    return {
+      backdrop: rgb,
+      color1: { r: 0.78, g: 0.80, b: 0.84 },
+      color2: { r: 0.56, g: 0.59, b: 0.64 },
+      color3: { r: 0.90, g: 0.91, b: 0.94 },
+      darkStage: 0.96,
+    };
+  }
+
+  // Neutral gray / white custom color: pure monochrome (zero fake tint!)
+  if (s < 0.12) {
+    const brighter = clamp(l + 0.14, 0.35, 0.96);
+    const deeper = clamp(l - 0.16, 0.12, 0.78);
+    return {
+      backdrop: { r: rgb.r * 0.18, g: rgb.g * 0.18, b: rgb.b * 0.18 },
+      color1: rgb,
+      color2: { r: brighter, g: brighter, b: brighter },
+      color3: { r: deeper, g: deeper, b: deeper },
+      darkStage: l < 0.35 ? 0.8 : 0.45,
+    };
+  }
+
+  // Colored custom hex: preserve exact chosen hue; lift dark swatches for luminous shader glow & UI highlights
+  const darkStage = l < 0.28 ? 0.72 : 0.38;
+  const accentL = clamp(l < 0.36 ? l * 0.55 + 0.32 : l, 0.38, 0.66);
+  return {
+    backdrop: l < 0.26 ? rgb : hslToRgb(h, clamp(s * 0.8, 0.2, 0.85), clamp(l * 0.22, 0.02, 0.14)),
+    color1: hslToRgb(h, clamp(s * 1.05, 0.3, 0.96), accentL),
+    color2: hslToRgb(h, clamp(s * 0.88, 0.25, 0.95), clamp(accentL + 0.14, 0.44, 0.78)),
+    color3: hslToRgb(h, clamp(s * 1.05, 0.3, 1.0), clamp(accentL - 0.14, 0.24, 0.56)),
+    darkStage,
+  };
+}
