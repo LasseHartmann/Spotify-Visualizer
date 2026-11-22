@@ -31,6 +31,7 @@ import type {
   PlaybackControlAction,
   PlaybackState,
   ShaderPresetId,
+  SweepMode,
 } from '@shared/types';
 import type { AudioCaptureStatus } from '@/audio/audioEngine';
 import { SHADER_PRESETS } from '@/shaders/presets';
@@ -63,7 +64,8 @@ interface ControlHudProps {
   preset: ShaderPresetId;
   layoutMode: LyricsLayoutMode;
   showCover: boolean;
-  letterSweep: boolean;
+  sweepMode: SweepMode;
+  hasWordSync: boolean;
   audioEnabled: boolean;
   audioStatus: AudioCaptureStatus;
   showAudioMenu: boolean;
@@ -77,7 +79,7 @@ interface ControlHudProps {
   onSelectPreset: (preset: ShaderPresetId) => void;
   onCycleLayout: () => void;
   onToggleCover: () => void;
-  onToggleLetterSweep: () => void;
+  onCycleSweepMode: () => void;
   onToggleAudio: () => void;
   onCloseAudioMenu: () => void;
   onSelectWebAudioSource: (source: 'display' | 'mic' | 'off') => void;
@@ -112,7 +114,8 @@ export function ControlHud({
   preset,
   layoutMode,
   showCover,
-  letterSweep,
+  sweepMode,
+  hasWordSync,
   audioEnabled,
   audioStatus,
   showAudioMenu,
@@ -126,7 +129,7 @@ export function ControlHud({
   onSelectPreset,
   onCycleLayout,
   onToggleCover,
-  onToggleLetterSweep,
+  onCycleSweepMode,
   onToggleAudio,
   onCloseAudioMenu,
   onSelectWebAudioSource,
@@ -191,6 +194,22 @@ export function ControlHud({
       : layoutMode === 'cinema'
         ? 'Cinema'
         : 'Off';
+
+  const sweepLabel =
+    sweepMode === 'auto'
+      ? 'Sweep: Auto'
+      : sweepMode === 'always'
+        ? 'Sweep: All'
+        : 'Sweep: Off';
+
+  const sweepTitle =
+    sweepMode === 'auto'
+      ? hasWordSync
+        ? 'Word-synced track — letter sweep active. Click or press L to cycle Auto / All / Off'
+        : 'Line-synced track — Auto shows full lines. Click or press L for Sweep: All (estimated)'
+      : sweepMode === 'always'
+        ? 'Sweeping every synced song (true word timing or estimated). Click or press L to cycle'
+        : 'Letter sweep off — click or press L to enable Auto / All';
 
   const colorButtonLabel =
     colorMode === 'custom'
@@ -365,12 +384,12 @@ export function ControlHud({
               </button>
 
               <button
-                className={`hud-btn ${letterSweep ? 'active' : ''}`}
-                onClick={onToggleLetterSweep}
-                title="Toggle smooth letter-by-letter lyric progression & jump (L)"
+                className={`hud-btn ${sweepMode !== 'off' ? 'active' : ''}`}
+                onClick={onCycleSweepMode}
+                title={sweepTitle}
               >
                 <Type size={14} />
-                <span>Sweep</span>
+                <span>{sweepLabel}</span>
               </button>
 
               <button
@@ -703,7 +722,7 @@ export function ControlHud({
                 </span>
               </div>
               <div className="shortcut-row">
-                <span>Toggle Letter-by-Letter Sweep</span>
+                <span>Cycle Letter Sweep (Auto / All / Off)</span>
                 <kbd className="kbd">L</kbd>
               </div>
               <div className="shortcut-row">

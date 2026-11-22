@@ -72,4 +72,32 @@ describe('letterTiming', () => {
     expect(wordGroups[1].chars.some((c) => c.hopPx < -1)).toBe(true);
     expect(wordGroups[2].chars.every((c) => c.fill === 0)).toBe(true);
   });
+
+  it('honors exact syllable endTimeMs and keeps multi-syllable words unbroken', () => {
+    // Mirrors Apple Music / LyricsPlus timing for "Instant Crush": "re" (215ms) + "gret" (1474ms)
+    const line: LyricLine = {
+      timeMs: 30_760,
+      endTimeMs: 35_010,
+      text: 'never regret',
+      words: [
+        { timeMs: 32_803, endTimeMs: 33_321, text: 'never ' },
+        { timeMs: 33_321, endTimeMs: 33_536, text: 're' },
+        { timeMs: 33_536, endTimeMs: 35_010, text: 'gret' },
+      ],
+    };
+
+    // Mid-way through the long held "gret" syllable (34_200ms)
+    const groups = computeLetterProgression(line, 36_000, 337_000, 34_200);
+    const wordGroups = groups.filter((g) => !g.isSpace);
+    // "re" + "gret" MUST remain glued into one non-breaking word group "regret"!
+    expect(wordGroups).toHaveLength(2);
+    expect(wordGroups[1].chars.map((c) => c.char).join('')).toBe('regret');
+
+    // "r" and "e" (ended at 33_536) are 100% lit; "t" (near 35_010) is still unlit!
+    expect(wordGroups[1].chars[0].fill).toBe(1);
+    expect(wordGroups[1].chars[1].fill).toBe(1);
+    expect(wordGroups[1].chars[5].fill).toBe(0);
+    // Actively sweeping syllable letter is hopping upward
+    expect(wordGroups[1].chars.some((c) => c.fill > 0 && c.fill < 1 && c.hopPx < -1)).toBe(true);
+  });
 });

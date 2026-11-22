@@ -45,7 +45,11 @@ function renderActiveLineContent(
               '--cscale': c.scale.toFixed(3),
             } as CSSProperties;
             return (
-              <span key={`c-${gIdx}-${cIdx}`} className="lyric-char" style={style}>
+              <span
+                key={`c-${gIdx}-${cIdx}`}
+                className={`lyric-char ${c.isBackground ? 'is-bg-vocal' : ''}`}
+                style={style}
+              >
                 {c.char}
               </span>
             );

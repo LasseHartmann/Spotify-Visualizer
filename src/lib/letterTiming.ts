@@ -8,6 +8,8 @@ export interface CharProgress {
   hopPx: number;
   /** Subtle scale boost at peak of the letter jump (1.0 .. 1.065) */
   scale: number;
+  /** True for subtle parenthetical background vocal syllables when supplied */
+  isBackground?: boolean;
 }
 
 export interface WordCharGroup {
@@ -19,8 +21,8 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function charWeight(ch: string): number {
-  if (ch === ' ') return 0.35;
+function charWeight(ch: string, hasExplicitEnd = false): number {
+  if (ch === ' ') return hasExplicitEnd ? 0.12 : 0.35;
   if (ch === ',' || ch === ';') return 1.8;
   if (ch === '.' || ch === '!' || ch === '?' || ch === '—' || ch === '-') return 2.1;
   return 1.0;
@@ -34,8 +36,17 @@ export function estimateLineDurationMs(
   text: string,
   lineStartMs: number,
   nextLineTimeMs: number | null,
-  trackDurationMs: number
+  trackDurationMs: number,
+  explicitLineEndMs?: number
 ): number {
+  if (
+    typeof explicitLineEndMs === 'number' &&
+    Number.isFinite(explicitLineEndMs) &&
+    explicitLineEndMs > lineStartMs
+  ) {
+    return clamp(explicitLineEndMs - lineStartMs, 250, 14_000);
+  }
+
   let weightSum = 0;
   for (const ch of text) {
     weightSum += charWeight(ch);
@@ -56,6 +67,7 @@ interface TimedChar {
   char: string;
   startMs: number;
   endMs: number;
+  isBackground?: boolean;
 }
 
 function buildTimedChars(
@@ -68,19 +80,37 @@ function buildTimedChars(
   if (line.words && line.words.length > 0) {
     const lineEndMs =
       line.timeMs +
-      estimateLineDurationMs(line.text, line.timeMs, nextLineTimeMs, trackDurationMs);
+      estimateLineDurationMs(
+        line.text,
+        line.timeMs,
+        nextLineTimeMs,
+        trackDurationMs,
+        line.endTimeMs
+      );
 
     for (let wIdx = 0; wIdx < line.words.length; wIdx++) {
       const word = line.words[wIdx];
-      const nextWordStart =
-        wIdx + 1 < line.words.length ? line.words[wIdx + 1].timeMs : lineEndMs;
       const wordStart = word.timeMs;
-      const wordDur = Math.max(120, Math.min(2600, nextWordStart - wordStart));
-      const glyphs = Array.from(word.text);
+      const hasExplicitEnd =
+        typeof word.endTimeMs === 'number' &&
+        Number.isFinite(word.endTimeMs) &&
+        word.endTimeMs > wordStart;
 
+      let wordDur: number;
+      if (hasExplicitEnd) {
+        // Exact millisecond syllable/word duration (e.g. Apple Music TTML via LyricsPlus)
+        wordDur = clamp(word.endTimeMs! - wordStart, 35, 8000);
+      } else {
+        // Enhanced LRC <mm:ss.xx> without explicit end time: span until next word
+        const nextWordStart =
+          wIdx + 1 < line.words.length ? line.words[wIdx + 1].timeMs : lineEndMs;
+        wordDur = clamp(nextWordStart - wordStart, 90, 3500);
+      }
+
+      const glyphs = Array.from(word.text);
       let totalW = 0;
       const weights = glyphs.map((g) => {
-        const w = charWeight(g);
+        const w = charWeight(g, hasExplicitEnd);
         totalW += w;
         return w;
       });
@@ -91,7 +121,12 @@ function buildTimedChars(
         const cStart = wordStart + (acc / totalW) * wordDur;
         acc += weights[i];
         const cEnd = wordStart + (acc / totalW) * wordDur;
-        timed.push({ char: glyphs[i], startMs: cStart, endMs: Math.max(cStart + 18, cEnd) });
+        timed.push({
+          char: glyphs[i],
+          startMs: cStart,
+          endMs: Math.max(cStart + 18, cEnd),
+          isBackground: word.isBackground,
+        });
       }
     }
     return timed;
@@ -104,7 +139,8 @@ function buildTimedChars(
     line.text,
     line.timeMs,
     nextLineTimeMs,
-    trackDurationMs
+    trackDurationMs,
+    line.endTimeMs
   );
 
   let totalW = 0;
@@ -127,7 +163,8 @@ function buildTimedChars(
 
 /**
  * Computes per-character loading-bar fill (0..1) and smooth wave jump offsets
- * grouped into non-breaking word chunks so line wrapping stays clean.
+ * grouped into non-breaking word chunks so line wrapping stays clean even when
+ * a single word is split into multiple timed syllables (e.g. "fan" + "ta" + "sy?").
  */
 export function computeLetterProgression(
   line: LyricLine,
@@ -138,7 +175,6 @@ export function computeLetterProgression(
   const timed = buildTimedChars(line, nextLineTimeMs, trackDurationMs);
   const groups: WordCharGroup[] = [];
 
-  const WAVE_HALF_WIDTH_MS = 165;
   const MAX_HOP_PX = 5.5;
   const MAX_SCALE_BOOST = 0.065;
 
@@ -146,22 +182,30 @@ export function computeLetterProgression(
 
   for (const item of timed) {
     const isSpace = item.char === ' ';
-    const fill = clamp((currentMs - item.startMs) / Math.max(1, item.endMs - item.startMs), 0, 1);
+    const charDur = Math.max(18, item.endMs - item.startMs);
+    const fill = clamp((currentMs - item.startMs) / charDur, 0, 1);
 
     let hopPx = 0;
     let scale = 1;
     if (!isSpace) {
+      // Adaptive wave width: snappy ripple on fast syllables, graceful buoyant lift on long held notes
+      const waveHalfWidthMs = clamp(charDur * 0.72, 155, 340);
       const midMs = (item.startMs + item.endMs) * 0.5;
-      const dist = Math.abs(currentMs - midMs) / WAVE_HALF_WIDTH_MS;
+      const dist = Math.abs(currentMs - midMs) / waveHalfWidthMs;
       if (dist < 1) {
-        // Smooth raised-cosine wave peaking right as the loading bar sweeps through the letter
         const wave = 0.5 * (1 + Math.cos(dist * Math.PI));
         hopPx = -MAX_HOP_PX * wave;
         scale = 1 + MAX_SCALE_BOOST * wave;
       }
     }
 
-    const cp: CharProgress = { char: item.char, fill, hopPx, scale };
+    const cp: CharProgress = {
+      char: item.char,
+      fill,
+      hopPx,
+      scale,
+      isBackground: item.isBackground,
+    };
 
     if (!currentGroup || currentGroup.isSpace !== isSpace) {
       currentGroup = { isSpace, chars: [cp] };

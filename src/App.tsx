@@ -7,6 +7,7 @@ import type {
   PlaybackControlAction,
   PlaybackState,
   ShaderPresetId,
+  SweepMode,
   ThemePalette,
   TrackInfo,
 } from '@shared/types';
@@ -38,6 +39,7 @@ const INITIAL_AUTH: AuthState = {
 
 const LAYOUT_CYCLE: LyricsLayoutMode[] = ['focus', 'cinema', 'hidden'];
 const COLOR_MODE_CYCLE: ColorMode[] = ['album-cycle', 'album-lock', 'custom'];
+const SWEEP_MODE_CYCLE: SweepMode[] = ['auto', 'always', 'off'];
 
 function loadSavedPreset(): ShaderPresetId {
   const saved = localStorage.getItem('sv:preset:v2');
@@ -61,9 +63,14 @@ function loadSavedLayout(): LyricsLayoutMode {
   return 'focus';
 }
 
-function loadSavedLetterSweep(): boolean {
-  const saved = localStorage.getItem('sv:letterSweep');
-  return saved === null ? true : saved === '1';
+function loadSavedSweepMode(): SweepMode {
+  const saved = localStorage.getItem('sv:sweepMode');
+  if (saved === 'auto' || saved === 'always' || saved === 'off') {
+    return saved;
+  }
+  const legacy = localStorage.getItem('sv:letterSweep');
+  if (legacy === '0') return 'off';
+  return 'auto';
 }
 
 function loadSavedColorMode(): ColorMode {
@@ -107,7 +114,7 @@ export function App() {
   const [preset, setPreset] = useState<ShaderPresetId>(loadSavedPreset);
   const [layoutMode, setLayoutMode] = useState<LyricsLayoutMode>(loadSavedLayout);
   const [showCover, setShowCover] = useState<boolean>(loadSavedShowCover);
-  const [letterSweep, setLetterSweep] = useState<boolean>(loadSavedLetterSweep);
+  const [sweepMode, setSweepMode] = useState<SweepMode>(loadSavedSweepMode);
   const [audioEnabled, setAudioEnabled] = useState(!isWeb);
   const [audioStatus, setAudioStatus] = useState<AudioCaptureStatus>('idle');
   const [colorMode, setColorMode] = useState<ColorMode>(loadSavedColorMode);
@@ -137,11 +144,26 @@ export function App() {
   });
 
   const parsedLines = useMemo(() => {
-    if (lyricsResult?.status === 'synced' && lyricsResult.syncedLyrics) {
-      return parseLrc(lyricsResult.syncedLyrics);
+    if (lyricsResult?.status === 'synced') {
+      if (lyricsResult.richLines && lyricsResult.richLines.length > 0) {
+        return lyricsResult.richLines;
+      }
+      if (lyricsResult.syncedLyrics) {
+        return parseLrc(lyricsResult.syncedLyrics);
+      }
     }
     return [];
   }, [lyricsResult]);
+
+  const hasWordSync = useMemo(
+    () =>
+      Boolean(lyricsResult?.hasWordSync) ||
+      parsedLines.some((l) => Boolean(l.words && l.words.length > 0)),
+    [lyricsResult, parsedLines]
+  );
+
+  const effectiveLetterSweep =
+    sweepMode === 'always' || (sweepMode === 'auto' && hasWordSync);
 
   const effectivePalette = useMemo(
     () => (colorMode === 'custom' ? paletteFromCustomHex(customColor) : palette),
@@ -408,10 +430,11 @@ export function App() {
     });
   }, []);
 
-  const toggleLetterSweep = useCallback(() => {
-    setLetterSweep((prev) => {
-      const next = !prev;
-      localStorage.setItem('sv:letterSweep', next ? '1' : '0');
+  const cycleSweepMode = useCallback(() => {
+    setSweepMode((prev) => {
+      const next =
+        SWEEP_MODE_CYCLE[(SWEEP_MODE_CYCLE.indexOf(prev) + 1) % SWEEP_MODE_CYCLE.length];
+      localStorage.setItem('sv:sweepMode', next);
       return next;
     });
   }, []);
@@ -633,7 +656,7 @@ export function App() {
           break;
         case 'l':
         case 'L':
-          toggleLetterSweep();
+          cycleSweepMode();
           revealHud();
           break;
         case 'v':
@@ -691,7 +714,7 @@ export function App() {
     showColorMenu,
     showShortcuts,
     toggleCover,
-    toggleLetterSweep,
+    cycleSweepMode,
   ]);
 
   const effectiveLyricTimeMs = Math.max(0, currentMs + offsetMs);
@@ -735,7 +758,7 @@ export function App() {
             currentMs={effectiveLyricTimeMs}
             layoutMode={layoutMode}
             showCover={showCover}
-            letterSweep={letterSweep}
+            letterSweep={effectiveLetterSweep}
             isLoadingLyrics={isLoadingLyrics}
           />
 
@@ -750,7 +773,8 @@ export function App() {
             preset={preset}
             layoutMode={layoutMode}
             showCover={showCover}
-            letterSweep={letterSweep}
+            sweepMode={sweepMode}
+            hasWordSync={hasWordSync}
             audioEnabled={audioEnabled}
             audioStatus={audioStatus}
             showAudioMenu={showAudioMenu}
@@ -764,7 +788,7 @@ export function App() {
             onSelectPreset={selectPreset}
             onCycleLayout={cycleLayout}
             onToggleCover={toggleCover}
-            onToggleLetterSweep={toggleLetterSweep}
+            onCycleSweepMode={cycleSweepMode}
             onToggleAudio={handleToggleAudio}
             onCloseAudioMenu={() => setShowAudioMenu(false)}
             onSelectWebAudioSource={(src) => void handleSelectWebAudioSource(src)}

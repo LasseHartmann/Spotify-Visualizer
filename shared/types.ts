@@ -2,6 +2,8 @@ export type ShaderPresetId = 'pulse' | 'eclipse' | 'tide' | 'spectrum' | 'blank'
 
 export type ColorMode = 'album-cycle' | 'album-lock' | 'custom';
 
+export type SweepMode = 'auto' | 'always' | 'off';
+
 export type LyricsLayoutMode = 'focus' | 'cinema' | 'hidden';
 
 export type PlaybackControlAction = 'playPause' | 'next' | 'previous';
@@ -44,11 +46,14 @@ export interface PlaybackState {
 
 export interface WordTiming {
   timeMs: number;
+  endTimeMs?: number;
   text: string;
+  isBackground?: boolean;
 }
 
 export interface LyricLine {
   timeMs: number;
+  endTimeMs?: number;
   text: string;
   words?: WordTiming[];
 }
@@ -57,8 +62,12 @@ export interface LyricsResult {
   trackId: string;
   status: 'synced' | 'plain' | 'instrumental' | 'not_found' | 'error';
   syncedLyrics: string | null;
+  /** Structured word/syllable-timed lines (e.g. from LyricsPlus / Apple TTML) when available */
+  richLines?: LyricLine[] | null;
+  /** True when the track has real per-word / per-syllable timestamps */
+  hasWordSync?: boolean;
   plainLyrics: string | null;
-  source: 'lrclib' | 'cache' | 'none';
+  source: 'lyricsplus' | 'lrclib' | 'cache' | 'none';
 }
 
 export interface RGB {

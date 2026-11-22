@@ -684,6 +684,11 @@ body,
   margin: 0 -0.015em;
 }
 
+.lyric-char.is-bg-vocal {
+  font-size: 0.84em;
+  opacity: 0.84;
+}
+
 .instrumental-dots {
   display: inline-flex;
   align-items: center;

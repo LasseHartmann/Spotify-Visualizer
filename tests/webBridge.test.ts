@@ -5,7 +5,12 @@ import {
   isValidSpotifyClientId,
   parseOAuthCallbackParams,
 } from '../src/platform/webBridge';
-import { pickBestLrclibCandidate } from '../shared/lyricsLookup';
+import {
+  hasEnhancedWordTags,
+  parseDurationStringSec,
+  parseLyricsPlusResponse,
+  pickBestLrclibCandidate,
+} from '../shared/lyricsLookup';
 
 describe('webBridge helpers', () => {
   it('builds a clean /callback Redirect URI from any Vercel or local origin', () => {
@@ -80,5 +85,86 @@ describe('webBridge helpers', () => {
       337
     );
     expect(best?.id).toBe(2);
+  });
+
+  it('prefers Enhanced LRC word-synced entries over standard line-synced LRCLIB entries', () => {
+    const best = pickBestLrclibCandidate(
+      [
+        {
+          id: 10,
+          trackName: 'Never Gonna Give You Up',
+          artistName: 'Rick Astley',
+          duration: 213,
+          syncedLyrics: '[00:18.89] We\'re no strangers to love',
+        },
+        {
+          id: 11,
+          trackName: 'Never Gonna Give You Up',
+          artistName: 'Rick Astley',
+          duration: 213,
+          syncedLyrics: '[00:18.89] <00:18.89>We\'re <00:19.25>no <00:19.53>strangers',
+        },
+      ],
+      'Never Gonna Give You Up',
+      'Rick Astley',
+      213
+    );
+    expect(best?.id).toBe(11);
+    expect(hasEnhancedWordTags(best?.syncedLyrics)).toBe(true);
+  });
+
+  it('parses LyricsPlus word/syllable responses and rejects mismatched durations', () => {
+    expect(parseDurationStringSec('5:37.562')).toBeCloseTo(337.562, 2);
+
+    const parsed = parseLyricsPlusResponse(
+      'track-1',
+      {
+        type: 'Word',
+        metadata: { source: 'Apple', totalDuration: '3:20.046' },
+        lyrics: [
+          {
+            time: 27395,
+            duration: 1565,
+            text: 'I been tryna call',
+            syllabus: [
+              { time: 27395, duration: 154, text: 'I ' },
+              { time: 27549, duration: 191, text: 'been ' },
+              { time: 27740, duration: 337, text: 'tryna ' },
+              { time: 28077, duration: 883, text: 'call' },
+            ],
+          },
+          {
+            time: 45000,
+            duration: 2000,
+            text: 'After break',
+            syllabus: [
+              { time: 45000, duration: 900, text: 'After ' },
+              { time: 45900, duration: 1100, text: 'break' },
+            ],
+          },
+        ],
+      },
+      200
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.source).toBe('lyricsplus');
+    expect(parsed?.hasWordSync).toBe(true);
+    // 28960ms -> 45000ms is > 12s gap, so an instrumental break marker is inserted between the 2 lines!
+    expect(parsed?.richLines).toHaveLength(3);
+    expect(parsed?.richLines?.[1].text).toBe('');
+    expect(parsed?.richLines?.[0].words?.[3].endTimeMs).toBe(28960);
+
+    // Reject if totalDuration disagrees wildly (e.g. 9:00 vs 3:20)
+    const rejected = parseLyricsPlusResponse(
+      'track-1',
+      {
+        type: 'Word',
+        metadata: { source: 'Apple', totalDuration: '9:19.000' },
+        lyrics: [{ time: 1000, duration: 1000, text: 'Wrong song' }],
+      },
+      200
+    );
+    expect(rejected).toBeNull();
   });
 });

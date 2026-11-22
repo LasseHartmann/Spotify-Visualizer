@@ -22,7 +22,7 @@ const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
 const KEY_CLIENT_ID = 'sv:web:clientId';
 const KEY_SESSION = 'sv:web:session';
 const KEY_PKCE = 'sv:web:pkce';
-const KEY_LYRICS_CACHE = 'sv:web:lyricsCache';
+const KEY_LYRICS_CACHE = 'sv:web:lyricsCache:v2';
 const KEY_LYRICS_OFFSETS = 'sv:web:lyricsOffsets';
 
 const MAX_WEB_LYRICS_CACHE = 120;

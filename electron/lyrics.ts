@@ -17,7 +17,7 @@ export class LyricsService {
   private offsets = new Map<string, number>();
 
   private get cacheFilePath(): string {
-    return path.join(app.getPath('userData'), 'lyrics-cache.json');
+    return path.join(app.getPath('userData'), 'lyrics-cache-v2.json');
   }
 
   private get offsetsFilePath(): string {

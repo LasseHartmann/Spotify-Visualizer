@@ -18,7 +18,7 @@ A full-screen Windows desktop visualizer that pairs real-time **audio-reactive W
 * **Native Windows WASAPI Audio Loopback:** Uses a lightweight bundled Windows Core Audio helper (`wasapi-tap.exe`) so real-time audio reactivity works out of the box across stereo speakers, Bluetooth, Dolby Atmos, and **5.1 / 7.1 surround gaming headsets**—with zero screen-capture border and automatic device switching.
 * **Adaptive Auto-Gain & Self-Regulating Pulse:** Automatically normalizes volume levels and adjusts beat pulse intensity from chill acoustic songs to heavy drops.
 * **Non-Overlapping Album Cover Showcase (`V`):** Optionally displays the album artwork cleanly alongside Focus lyrics, above Cinema subtitles, or centered over pure shaders.
-* **Synced Lyrics with Letter-by-Letter Sweep & Hop (`L`):** Line-synced and enhanced word-synced lyrics via LRCLIB with 60 FPS clock interpolation, a smooth left-to-right loading-bar fill sweeping through each letter as it subtly lifts (ON by default, toggleable via **Sweep** or `L`), local caching, and per-track `±100ms` timing nudges (`[` / `]`).
+* **Syllable & Word-Synced Lyrics with Letter-by-Letter Sweep & Hop (`L`):** Pulls syllable/word-level timings from **LyricsPlus** (Apple Music / Musixmatch / Spotify catalog) with automatic **LRCLIB** fallback (preferring Enhanced LRC `<mm:ss.xx>` when present). Smooth 60 FPS intra-letter loading-bar fill & jump wave supports **`Sweep: Auto`** *(word-synced tracks, default)*, **`Sweep: All`** *(every synced track)*, and **`Sweep: Off`**, with local caching and per-track `±100ms` timing nudges (`[` / `]`).
 * **Built-In Music Controls:** Previous, Play/Pause, and Next controls (`Space`, `←`, `→`) using Spotify's Web API with automatic native Windows media-key fallback.
 
 ---
@@ -67,7 +67,7 @@ The exact same repository also deploys directly to **Vercel** as a zero-backend 
 | `Space` | Play / Pause music |
 | `←` / `→` | Previous / Next track |
 | `1` – `5` | Switch background style (`Pulse Wash`, `Bass Eclipse`, `Chromatic Tide`, `Spectrum Wall`, `Blank`) |
-| `L` | Toggle letter-by-letter lyric progression & jump |
+| `L` | Cycle letter-by-letter sweep (`Auto` / `All` / `Off`) |
 | `V` | Show / hide album cover showcase |
 | `C` | Cycle color mode (**Album Cycle** / **Album Lock** / **Custom**) |
 | `M` | Cycle lyrics mode (`Focus` / `Cinema` / `Off`) |
