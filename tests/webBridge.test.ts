@@ -5,6 +5,7 @@ import {
   isValidSpotifyClientId,
   parseOAuthCallbackParams,
 } from '../src/platform/webBridge';
+import { buildSilentWavBytes } from '../src/platform/keepAwake';
 import {
   hasEnhancedWordTags,
   parseDurationStringSec,
@@ -166,5 +167,17 @@ describe('webBridge helpers', () => {
       200
     );
     expect(rejected).toBeNull();
+  });
+
+  it('builds a valid 1-second silent PCM WAV buffer for Keep Awake on Amazon Silk / mobile', () => {
+    const wav = buildSilentWavBytes(1, 8000);
+    expect(wav.byteLength).toBe(8044);
+    // Standard RIFF / WAVE header signatures
+    expect(String.fromCharCode(wav[0], wav[1], wav[2], wav[3])).toBe('RIFF');
+    expect(String.fromCharCode(wav[8], wav[9], wav[10], wav[11])).toBe('WAVE');
+    expect(String.fromCharCode(wav[36], wav[37], wav[38], wav[39])).toBe('data');
+    // Sample payload is pure unsigned 8-bit silence (128)
+    expect(wav[44]).toBe(128);
+    expect(wav[wav.byteLength - 1]).toBe(128);
   });
 });

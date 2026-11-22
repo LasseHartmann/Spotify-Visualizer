@@ -30,6 +30,7 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   background: #06080f;
   color: #f8fafc;
@@ -1189,9 +1190,9 @@ body,
 }
 
 .audio-popover {
-  position: absolute;
-  top: calc(100% + 12px);
-  left: 0;
+  position: fixed;
+  top: 72px;
+  left: 26px;
   width: 282px;
   padding: 12px;
   border-radius: 20px;
@@ -1202,6 +1203,7 @@ body,
     0 24px 60px rgba(0, 0, 0, 0.62),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   z-index: 35;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1264,9 +1266,9 @@ body,
 }
 
 .color-popover {
-  position: absolute;
-  top: calc(100% + 12px);
-  right: 0;
+  position: fixed;
+  top: 72px;
+  right: 26px;
   width: 296px;
   padding: 14px;
   border-radius: 20px;
@@ -1277,6 +1279,7 @@ body,
     0 24px 60px rgba(0, 0, 0, 0.62),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   z-index: 35;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   gap: 11px;
@@ -1583,4 +1586,461 @@ body,
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ───────────── RESPONSIVE: MOBILE PORTRAIT (Desktop Windows .exe unaffected) ───────────── */
+@media (max-width: 768px) {
+  .hud-layer {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      12px
+      max(14px, env(safe-area-inset-bottom));
+  }
+
+  .hud-top {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+  }
+
+  .hud-group {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .hud-group::-webkit-scrollbar {
+    display: none;
+  }
+
+  .glass-pill {
+    padding: 4px;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .hud-btn {
+    font-size: 0.75rem;
+    padding: 6px 9px;
+    gap: 4px;
+  }
+
+  .preset-key,
+  .shortcuts-trigger-btn,
+  .user-badge-pill {
+    display: none;
+  }
+
+  .color-popover,
+  .audio-popover {
+    position: fixed;
+    top: calc(max(12px, env(safe-area-inset-top)) + 96px);
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(320px, calc(100vw - 24px));
+    max-height: calc(100dvh - 140px);
+    overflow-y: auto;
+  }
+
+  .hud-bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .track-card {
+    width: 100%;
+    max-width: 400px;
+    padding: 8px 12px 8px 8px;
+    gap: 10px;
+    border-radius: 16px;
+  }
+
+  .album-cover {
+    width: 44px;
+    height: 44px;
+    border-radius: 9px;
+  }
+
+  .track-meta {
+    flex: 1 1 0;
+  }
+
+  .track-name {
+    font-size: 0.9rem;
+  }
+
+  .track-artist {
+    font-size: 0.76rem;
+  }
+
+  .progress-rail {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 72px;
+  }
+
+  .transport-pill {
+    padding: 5px 10px;
+    gap: 8px;
+  }
+
+  .tuning-panel {
+    padding: 6px 12px;
+    gap: 8px;
+  }
+
+  .backlight-label {
+    display: none;
+  }
+
+  .lyrics-stage {
+    padding: 108px 18px 186px;
+  }
+
+  .lyrics-stage.has-cover-focus {
+    flex-direction: column;
+    justify-content: center;
+    gap: 14px;
+    padding: 112px 18px 186px;
+  }
+
+  .has-cover-focus .lyrics-focus-viewport,
+  .has-cover-focus .lyrics-plain-column,
+  .has-cover-focus .lyrics-empty-slot {
+    width: 100%;
+    min-height: 0;
+    height: auto;
+  }
+
+  .has-cover-focus .lyrics-track {
+    align-items: center;
+    padding: 0 8px;
+  }
+
+  .has-cover-focus .lyric-line {
+    text-align: center;
+    transform-origin: center center;
+    font-size: clamp(1.25rem, 5.4vw, 1.9rem);
+  }
+
+  .has-cover-focus .lyrics-plain-column {
+    align-items: center;
+  }
+
+  .has-cover-focus .plain-lyrics-line {
+    text-align: center;
+  }
+
+  .lyrics-stage.mode-cinema {
+    padding: 104px 18px 186px;
+  }
+
+  .lyrics-stage.mode-cinema.has-cover-cinema {
+    padding: 96px 18px 182px;
+    gap: 14px;
+  }
+
+  .cover-showcase-pane {
+    width: clamp(132px, 38vw, 196px);
+    gap: 10px;
+  }
+
+  .cover-showcase-pane.is-compact {
+    width: clamp(120px, 34vw, 172px);
+    gap: 8px;
+  }
+
+  .cover-showcase-title {
+    font-size: 0.96rem;
+  }
+
+  .cover-showcase-artist {
+    font-size: 0.8rem;
+  }
+
+  .lyrics-track {
+    gap: 20px;
+  }
+
+  .lyric-line {
+    font-size: clamp(1.32rem, 5.8vw, 2.05rem);
+    line-height: 1.28;
+  }
+
+  .cinema-active {
+    font-size: clamp(1.38rem, 6vw, 2.15rem);
+  }
+
+  .cinema-next {
+    font-size: clamp(0.88rem, 3.6vw, 1.05rem);
+  }
+
+  .login-layer {
+    padding: 16px;
+  }
+
+  .login-card {
+    padding: 24px 20px 22px;
+    border-radius: 22px;
+    gap: 13px;
+  }
+
+  .login-title {
+    font-size: 1.58rem;
+  }
+
+  .offset-toast {
+    bottom: 204px;
+    max-width: calc(100vw - 28px);
+    text-align: center;
+  }
+}
+
+/* ───────────── RESPONSIVE: COMPACT LANDSCAPE / ECHO SHOW 5 (960x480) & LANDSCAPE PHONES ───────────── */
+@media (max-height: 560px) {
+  .hud-layer {
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .hud-top {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .hud-group {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .hud-group::-webkit-scrollbar {
+    display: none;
+  }
+
+  .glass-pill {
+    padding: 3px;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .hud-btn {
+    font-size: 0.71rem;
+    padding: 5px 8px;
+    gap: 4px;
+  }
+
+  .hud-btn.icon-only {
+    width: 28px;
+    height: 28px;
+  }
+
+  .preset-key,
+  .shortcuts-trigger-btn,
+  .user-badge-pill {
+    display: none;
+  }
+
+  .audio-popover {
+    position: fixed;
+    top: 48px;
+    left: 12px;
+    right: auto;
+    transform: none;
+    width: min(276px, calc(100vw - 24px));
+    max-height: calc(100dvh - 60px);
+    overflow-y: auto;
+  }
+
+  .color-popover {
+    position: fixed;
+    top: 48px;
+    right: 12px;
+    left: auto;
+    transform: none;
+    width: min(292px, calc(100vw - 24px));
+    max-height: calc(100dvh - 60px);
+    overflow-y: auto;
+  }
+
+  .hud-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: end;
+    gap: 8px;
+  }
+
+  .track-card {
+    padding: 6px 10px 6px 6px;
+    gap: 8px;
+    max-width: 250px;
+    border-radius: 14px;
+  }
+
+  .album-cover {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+  }
+
+  .track-name {
+    font-size: 0.82rem;
+  }
+
+  .track-artist {
+    font-size: 0.72rem;
+  }
+
+  .progress-rail {
+    width: 72px;
+    flex: 0 1 72px;
+  }
+
+  .transport-pill {
+    padding: 4px 8px;
+    gap: 5px;
+  }
+
+  .transport-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  .transport-play-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .tuning-panel {
+    padding: 5px 10px;
+    gap: 6px;
+  }
+
+  .backlight-label {
+    display: none;
+  }
+
+  .lyrics-stage {
+    padding: 52px 5vw 62px;
+  }
+
+  .lyrics-stage.has-cover-focus {
+    flex-direction: row;
+    gap: 26px;
+    padding: 50px 5vw 60px;
+  }
+
+  .has-cover-focus .lyrics-track {
+    align-items: flex-start;
+    padding: 0 14px 0 4px;
+  }
+
+  .has-cover-focus .lyric-line {
+    text-align: left;
+    transform-origin: left center;
+    font-size: clamp(1.15rem, 2.6vw, 1.75rem);
+  }
+
+  .lyrics-stage.mode-cinema {
+    padding: 50px 5vw 64px;
+  }
+
+  .lyrics-stage.mode-cinema.has-cover-cinema {
+    padding: 48px 5vw 58px;
+    gap: 10px;
+  }
+
+  .cover-showcase-pane {
+    width: clamp(128px, 38vh, 192px);
+    gap: 8px;
+  }
+
+  .cover-showcase-pane.is-compact {
+    width: clamp(92px, 28vh, 138px);
+    gap: 6px;
+  }
+
+  .cover-showcase-frame {
+    border-radius: 16px;
+    padding: 4px;
+  }
+
+  .cover-showcase-art {
+    border-radius: 12px;
+  }
+
+  .cover-showcase-title {
+    font-size: 0.88rem;
+  }
+
+  .cover-showcase-artist {
+    font-size: 0.74rem;
+  }
+
+  .lyrics-track {
+    gap: 16px;
+  }
+
+  .lyric-line {
+    font-size: clamp(1.3rem, 3.2vw, 2.05rem);
+    line-height: 1.24;
+  }
+
+  .cinema-active {
+    font-size: clamp(1.32rem, 3.3vw, 2.05rem);
+  }
+
+  .cinema-next {
+    font-size: clamp(0.84rem, 1.7vw, 1.02rem);
+  }
+
+  .login-layer {
+    padding: 12px;
+  }
+
+  .login-card {
+    padding: 18px 22px 16px;
+    gap: 10px;
+    border-radius: 20px;
+  }
+
+  .brand-emblem {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+  }
+
+  .login-title {
+    font-size: 1.42rem;
+  }
+
+  .login-subtitle {
+    font-size: 0.84rem;
+  }
+
+  .spotify-btn {
+    height: 42px;
+    font-size: 0.92rem;
+  }
+
+  .offset-toast {
+    bottom: 62px;
+    font-size: 0.74rem;
+    padding: 6px 12px;
+  }
 }

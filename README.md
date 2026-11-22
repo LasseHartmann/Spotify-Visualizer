@@ -57,6 +57,7 @@ The exact same repository also deploys directly to **Vercel** as a zero-backend 
 3. Open your Vercel site, paste your **Client ID**, and click **Connect with Spotify**.
    * *(Optional: to prefill a Client ID for your own private Vercel deployment, add `VITE_SPOTIFY_CLIENT_ID` in Vercel Project Settings → Environment Variables.)*
    * **Browser Audio Note:** In the browser version, click **Ambient** in the top-left pill to enable **Tab / Screen Audio** *(best with Spotify Web Player)* or **Microphone / Line-In**. For automatic system-wide audio across speakers and 5.1/7.1 headsets with zero prompts, use the Windows `.exe`.
+   * **Mobile & Amazon Echo Show (Silk) Support:** The web app automatically adapts to phone screens and compact Echo Show displays (`960×480`) and includes a built-in **Keep Awake** (`Awake`) toggle combining the Screen Wake Lock API with a silent keep-alive audio loop (tap the screen once after opening on Echo Show to arm it).
 
 ---
 

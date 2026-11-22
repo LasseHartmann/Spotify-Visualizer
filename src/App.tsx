@@ -25,6 +25,7 @@ import { ShaderCanvas } from '@/components/ShaderCanvas';
 import { LoginScreen } from '@/components/LoginScreen';
 import { LyricsOverlay } from '@/components/LyricsOverlay';
 import { ControlHud } from '@/components/ControlHud';
+import { KeepAwakeManager, type KeepAwakeStatus } from '@/platform/keepAwake';
 import { isWebPlatform } from '@/platform/webBridge';
 
 const INITIAL_AUTH: AuthState = {
@@ -95,6 +96,11 @@ function loadSavedShowCover(): boolean {
   return localStorage.getItem('sv:showCover') === '1';
 }
 
+function loadSavedKeepAwake(): boolean {
+  const saved = localStorage.getItem('sv:keepAwake');
+  return saved === null ? true : saved === '1';
+}
+
 export function App() {
   const [auth, setAuth] = useState<AuthState>(INITIAL_AUTH);
   const [authLoaded, setAuthLoaded] = useState(false);
@@ -126,7 +132,10 @@ export function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showColorMenu, setShowColorMenu] = useState(false);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
+  const [keepAwakeEnabled, setKeepAwakeEnabled] = useState<boolean>(loadSavedKeepAwake);
+  const [keepAwakeStatus, setKeepAwakeStatus] = useState<KeepAwakeStatus>('off');
 
+  const keepAwakeRef = useRef<KeepAwakeManager | null>(null);
   const audioEngineRef = useRef<AudioEngine | null>(null);
   const latestTrackRef = useRef<TrackInfo | null>(null);
   const pollNowRef = useRef<(() => void) | null>(null);
@@ -205,13 +214,31 @@ export function App() {
     };
   }, []);
 
-  const revealHud = useCallback(() => {
+  const revealHud = useCallback((durationMs = 3000) => {
     setHudVisible(true);
     if (hudTimeoutRef.current) window.clearTimeout(hudTimeoutRef.current);
     hudTimeoutRef.current = window.setTimeout(() => {
       setHudVisible(false);
-    }, 3000);
+    }, durationMs);
   }, []);
+
+  // Web-only Keep Awake (Screen Wake Lock + silent audio stream for Amazon Silk / Echo Show 5 & phones)
+  useEffect(() => {
+    if (!isWeb) return;
+    const manager = new KeepAwakeManager(setKeepAwakeStatus);
+    keepAwakeRef.current = manager;
+    manager.setEnabled(keepAwakeEnabled);
+    return () => {
+      manager.dispose();
+      keepAwakeRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWeb]);
+
+  useEffect(() => {
+    if (!isWeb) return;
+    keepAwakeRef.current?.setEnabled(keepAwakeEnabled);
+  }, [isWeb, keepAwakeEnabled]);
 
   useEffect(() => {
     if (!auth.isAuthenticated) {
@@ -221,12 +248,14 @@ export function App() {
     }
 
     revealHud();
-    const onMove = () => revealHud();
+    const onMove = () => revealHud(3000);
+    const onPointerDown = (e: PointerEvent) =>
+      revealHud(e.pointerType === 'touch' ? 4500 : 3000);
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('pointerdown', onMove);
+    window.addEventListener('pointerdown', onPointerDown);
     return () => {
       window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('pointerdown', onMove);
+      window.removeEventListener('pointerdown', onPointerDown);
       if (hudTimeoutRef.current) window.clearTimeout(hudTimeoutRef.current);
     };
   }, [auth.isAuthenticated, revealHud]);
@@ -528,6 +557,22 @@ export function App() {
     }, durationMs);
   }, []);
 
+  const handleToggleKeepAwake = useCallback(() => {
+    if (!isWeb) return;
+    if (keepAwakeEnabled && keepAwakeStatus === 'waiting') {
+      void keepAwakeRef.current?.engage().then((ok) => {
+        flashToast(ok ? 'Keep Awake active' : 'Tap once more to arm Keep Awake', 2000);
+      });
+      return;
+    }
+    setKeepAwakeEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('sv:keepAwake', next ? '1' : '0');
+      flashToast(next ? 'Keep Awake enabled' : 'Keep Awake off', 1800);
+      return next;
+    });
+  }, [flashToast, isWeb, keepAwakeEnabled, keepAwakeStatus]);
+
   const handleToggleAudio = useCallback(() => {
     if (isWeb) {
       setShowAudioMenu((v) => !v);
@@ -785,6 +830,8 @@ export function App() {
             offsetToast={offsetToast}
             isFullscreen={isFullscreen}
             showShortcuts={showShortcuts}
+            keepAwakeEnabled={keepAwakeEnabled}
+            keepAwakeStatus={keepAwakeStatus}
             onSelectPreset={selectPreset}
             onCycleLayout={cycleLayout}
             onToggleCover={toggleCover}
@@ -802,6 +849,7 @@ export function App() {
             onPlaybackControl={(action) => void handlePlaybackControl(action)}
             onNudgeOffset={nudgeOffset}
             onResetOffset={resetOffset}
+            onToggleKeepAwake={handleToggleKeepAwake}
             onToggleFullscreen={() => void handleToggleFullscreen()}
             onToggleShortcuts={() => setShowShortcuts((v) => !v)}
             onLogout={() => void handleLogout()}
