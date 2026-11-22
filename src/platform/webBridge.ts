@@ -84,8 +84,20 @@ export function isValidSpotifyClientId(value: string): boolean {
 }
 
 export function getWebRedirectUri(origin?: string): string {
-  const base = (origin ?? window.location.origin).replace(/\/+$/, '');
-  return `${base}/callback`;
+  const raw = (origin ?? window.location.origin).replace(/\/+$/, '');
+  try {
+    const parsed = new URL(raw);
+    const isLocal =
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '[::1]';
+    if (!isLocal && parsed.protocol === 'http:') {
+      parsed.protocol = 'https:';
+    }
+    return `${parsed.origin}/callback`;
+  } catch {
+    return `${raw}/callback`;
+  }
 }
 
 export function buildSpotifyAuthorizeUrl(params: {

@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { Music2 } from 'lucide-react';
+import { LocateFixed, Music2 } from 'lucide-react';
 import type {
   LyricLine,
   LyricsLayoutMode,
@@ -116,39 +116,150 @@ export function LyricsOverlay({
   letterSweep,
   isLoadingLyrics,
 }: LyricsOverlayProps) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const [translateY, setTranslateY] = useState(0);
+  const [vpHeight, setVpHeight] = useState(520);
+  const [isUserScrolled, setIsUserScrolled] = useState(false);
+
+  const ignoreScrollUntilRef = useRef(0);
+  const expectedScrollTopRef = useRef(0);
+  const hasInitialPositionedRef = useRef(false);
+  const touchStartYRef = useRef<number | null>(null);
+
+  const track = playback?.track ?? null;
+  const trackId = track?.id ?? null;
 
   const activeIndex = useMemo(
     () => findActiveLineIndex(parsedLines, currentMs),
     [parsedLines, currentMs]
   );
 
-  // Smoothly center the active lyric line vertically in Focus mode (re-measures if cover toggles width)
-  useLayoutEffect(() => {
-    if (layoutMode !== 'focus' || parsedLines.length === 0) {
-      setTranslateY(0);
-      return;
-    }
+  // Reset manual scroll state whenever switching tracks, lyrics source, or layout mode
+  useEffect(() => {
+    setIsUserScrolled(false);
+    hasInitialPositionedRef.current = false;
+  }, [trackId, layoutMode, lyricsResult?.status]);
 
-    const measure = () => {
+  // Measure the Focus viewport height so first & last lyric lines center accurately on every screen
+  useLayoutEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+
+    const updateHeight = () => {
+      const h = vp.clientHeight;
+      if (h > 0) setVpHeight(h);
+    };
+    updateHeight();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(updateHeight);
+      ro.observe(vp);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
+  }, [layoutMode, showCover, lyricsResult?.status, parsedLines.length]);
+
+  const scrollToActiveLine = useCallback(
+    (behavior: ScrollBehavior) => {
+      const vp = viewportRef.current;
+      if (!vp || parsedLines.length === 0) return;
       const targetIndex = activeIndex < 0 ? 0 : activeIndex;
       const el = lineRefs.current[targetIndex];
       if (!el) return;
-      const centerOffset = el.offsetTop + el.offsetHeight / 2;
-      setTranslateY(-centerOffset);
-    };
 
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [activeIndex, layoutMode, parsedLines, showCover]);
+      const targetTop = Math.max(0, el.offsetTop + el.offsetHeight / 2 - vp.clientHeight / 2);
+      expectedScrollTopRef.current = targetTop;
+      ignoreScrollUntilRef.current = performance.now() + (behavior === 'smooth' ? 850 : 200);
+      vp.scrollTo({ top: targetTop, behavior });
+    },
+    [activeIndex, parsedLines.length]
+  );
+
+  // Auto-scroll smoothly to active line in Focus mode unless the user manually scrolled away
+  useLayoutEffect(() => {
+    if (layoutMode !== 'focus' || parsedLines.length === 0 || isUserScrolled) {
+      return;
+    }
+    const behavior: ScrollBehavior = hasInitialPositionedRef.current ? 'smooth' : 'auto';
+    hasInitialPositionedRef.current = true;
+    scrollToActiveLine(behavior);
+  }, [activeIndex, isUserScrolled, layoutMode, parsedLines.length, scrollToActiveLine, showCover, vpHeight]);
+
+  // Gentle auto-drift for unsynced plain lyrics unless user manually scrolled
+  useEffect(() => {
+    if (
+      layoutMode !== 'focus' ||
+      lyricsResult?.status !== 'plain' ||
+      !track ||
+      track.durationMs <= 0 ||
+      isUserScrolled
+    ) {
+      return;
+    }
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const maxScroll = Math.max(0, vp.scrollHeight - vp.clientHeight);
+    const ratio = Math.max(0, Math.min(1, currentMs / track.durationMs));
+    const targetTop = ratio * maxScroll;
+    expectedScrollTopRef.current = targetTop;
+    ignoreScrollUntilRef.current = performance.now() + 250;
+    vp.scrollTo({ top: targetTop, behavior: 'auto' });
+  }, [currentMs, isUserScrolled, layoutMode, lyricsResult?.status, track]);
 
   useEffect(() => {
     lineRefs.current = lineRefs.current.slice(0, parsedLines.length);
   }, [parsedLines.length]);
 
-  const track = playback?.track ?? null;
+  const markUserScrolled = useCallback(() => {
+    ignoreScrollUntilRef.current = 0;
+    setIsUserScrolled(true);
+  }, []);
+
+  const handleViewportWheel = useCallback(() => {
+    markUserScrolled();
+  }, [markUserScrolled]);
+
+  const handleViewportTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    touchStartYRef.current = e.touches[0]?.clientY ?? null;
+  }, []);
+
+  const handleViewportTouchMove = useCallback(
+    (e: React.TouchEvent<HTMLDivElement>) => {
+      if (touchStartYRef.current === null) return;
+      const y = e.touches[0]?.clientY ?? touchStartYRef.current;
+      if (Math.abs(y - touchStartYRef.current) > 8) {
+        markUserScrolled();
+      }
+    },
+    [markUserScrolled]
+  );
+
+  const handleViewportScroll = useCallback(() => {
+    if (isUserScrolled) return;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    if (performance.now() < ignoreScrollUntilRef.current) return;
+    if (Math.abs(vp.scrollTop - expectedScrollTopRef.current) > 36) {
+      setIsUserScrolled(true);
+    }
+  }, [isUserScrolled]);
+
+  const handleResync = useCallback(() => {
+    setIsUserScrolled(false);
+    if (lyricsResult?.status === 'synced') {
+      scrollToActiveLine('smooth');
+    } else if (lyricsResult?.status === 'plain' && track && track.durationMs > 0) {
+      const vp = viewportRef.current;
+      if (!vp) return;
+      const maxScroll = Math.max(0, vp.scrollHeight - vp.clientHeight);
+      const ratio = Math.max(0, Math.min(1, currentMs / track.durationMs));
+      const targetTop = ratio * maxScroll;
+      expectedScrollTopRef.current = targetTop;
+      ignoreScrollUntilRef.current = performance.now() + 850;
+      vp.scrollTo({ top: targetTop, behavior: 'smooth' });
+    }
+  }, [currentMs, lyricsResult?.status, scrollToActiveLine, track]);
 
   // Error states (e.g., allowlist block)
   if (playback?.status === 'error' && playback.errorCode === 'allowlist') {
@@ -280,53 +391,76 @@ export function LyricsOverlay({
       );
     }
 
+    const edgePadPx = Math.max(72, Math.round(vpHeight * 0.45));
+
     if (lyricsResult?.status === 'synced' && parsedLines.length > 0) {
       return (
-        <div className="lyrics-focus-viewport">
+        <div className="lyrics-focus-wrap">
           <div
-            className="lyrics-track"
-            style={{ transform: `translate3d(0, ${translateY}px, 0)` }}
+            ref={viewportRef}
+            className={`lyrics-focus-viewport ${isUserScrolled ? 'is-browsing' : ''}`}
+            onWheel={handleViewportWheel}
+            onTouchStart={handleViewportTouchStart}
+            onTouchMove={handleViewportTouchMove}
+            onScroll={handleViewportScroll}
           >
-            {parsedLines.map((line, index) => {
-              const delta = activeIndex < 0 ? index + 1 : index - activeIndex;
-              let stateClass = 'is-distant';
-              if (index === activeIndex) stateClass = 'is-active';
-              else if (delta === 1 || delta === -1) stateClass = delta < 0 ? 'is-past' : 'is-near';
-              else if (Math.abs(delta) === 2) stateClass = 'is-far';
+            <div
+              className="lyrics-track"
+              style={{ paddingTop: `${edgePadPx}px`, paddingBottom: `${edgePadPx}px` }}
+            >
+              {parsedLines.map((line, index) => {
+                const delta = activeIndex < 0 ? index + 1 : index - activeIndex;
+                let stateClass = 'is-distant';
+                if (index === activeIndex) stateClass = 'is-active';
+                else if (delta === 1 || delta === -1) stateClass = delta < 0 ? 'is-past' : 'is-near';
+                else if (Math.abs(delta) === 2) stateClass = 'is-far';
 
-              const isActiveLine = index === activeIndex;
-              const nextLineTimeMs =
-                index + 1 < parsedLines.length ? parsedLines[index + 1].timeMs : null;
+                const isActiveLine = index === activeIndex;
+                const nextLineTimeMs =
+                  index + 1 < parsedLines.length ? parsedLines[index + 1].timeMs : null;
 
-              return (
-                <div
-                  key={`${index}-${line.timeMs}`}
-                  ref={(el) => {
-                    lineRefs.current[index] = el;
-                  }}
-                  className={`lyric-line ${stateClass} ${isActiveLine && letterSweep ? 'is-sweep' : ''}`}
-                >
-                  {line.text === '' ? (
-                    <span className="instrumental-dots" aria-hidden="true">
-                      <span className="instrumental-dot" />
-                      <span className="instrumental-dot" />
-                      <span className="instrumental-dot" />
-                    </span>
-                  ) : isActiveLine ? (
-                    renderActiveLineContent(
-                      line,
-                      nextLineTimeMs,
-                      track.durationMs,
-                      currentMs,
-                      letterSweep
-                    )
-                  ) : (
-                    line.text
-                  )}
-                </div>
-              );
-            })}
+                return (
+                  <div
+                    key={`${index}-${line.timeMs}`}
+                    ref={(el) => {
+                      lineRefs.current[index] = el;
+                    }}
+                    className={`lyric-line ${stateClass} ${isActiveLine && letterSweep ? 'is-sweep' : ''}`}
+                  >
+                    {line.text === '' ? (
+                      <span className="instrumental-dots" aria-hidden="true">
+                        <span className="instrumental-dot" />
+                        <span className="instrumental-dot" />
+                        <span className="instrumental-dot" />
+                      </span>
+                    ) : isActiveLine ? (
+                      renderActiveLineContent(
+                        line,
+                        nextLineTimeMs,
+                        track.durationMs,
+                        currentMs,
+                        letterSweep
+                      )
+                    ) : (
+                      line.text
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
+
+          {isUserScrolled && (
+            <button
+              type="button"
+              className="lyrics-resync-btn"
+              onClick={handleResync}
+              title="Jump back to the currently playing lyric line"
+            >
+              <LocateFixed size={14} />
+              <span>Sync</span>
+            </button>
+          )}
         </div>
       );
     }
@@ -336,30 +470,46 @@ export function LyricsOverlay({
         .split(/\r?\n/)
         .map((l) => l.trim())
         .filter(Boolean);
-      const ratio =
-        track.durationMs > 0
-          ? Math.max(0, Math.min(1, currentMs / track.durationMs))
-          : 0;
-      const approxLineHeight = 56;
-      const driftY = -ratio * Math.max(0, (plainLines.length - 1) * approxLineHeight);
 
       return (
         <div className="lyrics-plain-column">
           <span className="plain-lyrics-badge">Unsynced Lyrics</span>
-          <div className="lyrics-focus-viewport">
+          <div className="lyrics-focus-wrap">
             <div
-              className="lyrics-track"
-              style={{
-                transform: `translate3d(0, ${driftY}px, 0)`,
-                gap: '18px',
-              }}
+              ref={viewportRef}
+              className={`lyrics-focus-viewport ${isUserScrolled ? 'is-browsing' : ''}`}
+              onWheel={handleViewportWheel}
+              onTouchStart={handleViewportTouchStart}
+              onTouchMove={handleViewportTouchMove}
+              onScroll={handleViewportScroll}
             >
-              {plainLines.map((text, idx) => (
-                <div key={idx} className="plain-lyrics-line">
-                  {text}
-                </div>
-              ))}
+              <div
+                className="lyrics-track"
+                style={{
+                  paddingTop: `${Math.round(edgePadPx * 0.6)}px`,
+                  paddingBottom: `${Math.round(edgePadPx * 0.6)}px`,
+                  gap: '18px',
+                }}
+              >
+                {plainLines.map((text, idx) => (
+                  <div key={idx} className="plain-lyrics-line">
+                    {text}
+                  </div>
+                ))}
+              </div>
             </div>
+
+            {isUserScrolled && (
+              <button
+                type="button"
+                className="lyrics-resync-btn"
+                onClick={handleResync}
+                title="Resume auto-scroll"
+              >
+                <LocateFixed size={14} />
+                <span>Sync</span>
+              </button>
+            )}
           </div>
         </div>
       );

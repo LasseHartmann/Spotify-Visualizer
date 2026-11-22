@@ -18,11 +18,11 @@ import {
 
 describe('webBridge helpers', () => {
   it('builds a clean /callback Redirect URI from any Vercel or local origin', () => {
-    expect(getWebRedirectUri('https://spotify-visualizer.vercel.app')).toBe(
-      'https://spotify-visualizer.vercel.app/callback'
+    expect(getWebRedirectUri('https://spotify-lyric-visualizer.vercel.app')).toBe(
+      'https://spotify-lyric-visualizer.vercel.app/callback'
     );
-    expect(getWebRedirectUri('https://spotify-visualizer.vercel.app/')).toBe(
-      'https://spotify-visualizer.vercel.app/callback'
+    expect(getWebRedirectUri('http://spotify-lyric-visualizer.vercel.app/')).toBe(
+      'https://spotify-lyric-visualizer.vercel.app/callback'
     );
     expect(getWebRedirectUri('http://127.0.0.1:5173')).toBe('http://127.0.0.1:5173/callback');
   });

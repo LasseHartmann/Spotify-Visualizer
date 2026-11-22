@@ -1,6 +1,9 @@
 # Spotify Visualizer
 
-A full-screen Windows desktop visualizer that pairs real-time **audio-reactive WebGL2 shaders** (faithfully colored from each song's album artwork and tuned for average-screen-color LED backlights) with **synced lyrics** from Spotify + [LRCLIB](https://lrclib.net/).
+A full-screen desktop & web visualizer that pairs real-time **audio-reactive WebGL2 shaders** (faithfully colored from each song's album artwork and tuned for average-screen-color LED backlights) with **syllable-synced lyrics**.
+
+- **Web App (Browser / Mobile / Echo Show):** https://spotify-lyric-visualizer.vercel.app/
+- **Windows Portable `.exe`:** [Download Latest Release](https://github.com/LasseHartmann/Spotify-Visualizer/releases/latest)
 
 > **Disclaimer:** Independent open-source project. Not affiliated with, endorsed by, or sponsored by Spotify AB.
 
@@ -18,7 +21,7 @@ A full-screen Windows desktop visualizer that pairs real-time **audio-reactive W
 * **Native Windows WASAPI Audio Loopback:** Uses a lightweight bundled Windows Core Audio helper (`wasapi-tap.exe`) so real-time audio reactivity works out of the box across stereo speakers, Bluetooth, Dolby Atmos, and **5.1 / 7.1 surround gaming headsets**—with zero screen-capture border and automatic device switching.
 * **Adaptive Auto-Gain & Self-Regulating Pulse:** Automatically normalizes volume levels and adjusts beat pulse intensity from chill acoustic songs to heavy drops.
 * **Non-Overlapping Album Cover Showcase (`V`):** Optionally displays the album artwork cleanly alongside Focus lyrics, above Cinema subtitles, or centered over pure shaders.
-* **Syllable & Word-Synced Lyrics with Letter-by-Letter Sweep & Hop (`L`):** Pulls syllable/word-level timings from **LyricsPlus** (Apple Music / Musixmatch / Spotify catalog) with automatic **LRCLIB** fallback (preferring Enhanced LRC `<mm:ss.xx>` when present). Smooth 60 FPS intra-letter loading-bar fill & jump wave supports **`Sweep: Auto`** *(word-synced tracks, default)*, **`Sweep: All`** *(every synced track)*, and **`Sweep: Off`**, with local caching and per-track `±100ms` timing nudges (`[` / `]`).
+* **Syllable & Word-Synced Lyrics with Letter-by-Letter Sweep & Hop (`L`):** Pulls syllable/word-level timings from **LyricsPlus** (Apple Music / Musixmatch / Spotify catalog) with automatic **LRCLIB** fallback (preferring Enhanced LRC `<mm:ss.xx>` when present). Smooth 60 FPS intra-letter loading-bar fill & jump wave supports **`Sweep: Auto`** *(word-synced tracks, default)*, **`Sweep: All`** *(every synced track)*, and **`Sweep: Off`**, with free manual lyric scrolling + a one-click **Sync** button to snap back to the current line, local caching, and per-track `±100ms` timing nudges (`[` / `]`).
 * **Built-In Music Controls:** Previous, Play/Pause, and Next controls (`Space`, `←`, `→`) using Spotify's Web API with automatic native Windows media-key fallback.
 
 ---
@@ -45,20 +48,25 @@ Spotify Development Mode allows up to **5 Spotify accounts** per Client ID (your
 
 ---
 
-## Web App (Deploy on Vercel)
+## Web App (Browser & Mobile PWA)
 
-The exact same repository also deploys directly to **Vercel** as a zero-backend static web app (`vercel.json` is preconfigured):
+Use the hosted web app directly in any desktop, mobile, or Amazon Echo Show (Silk) browser — no download required:
 
-1. Import **`LasseHartmann/Spotify-Visualizer`** in [Vercel](https://vercel.com/new) and click **Deploy** *(no extra settings required—Vercel automatically skips Electron binary downloads and runs `npm run build:web`)*.
-2. In your [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → **Settings → Redirect URIs**, add your Vercel callback URL:
+**Live Web App:** https://spotify-lyric-visualizer.vercel.app/
+
+1. In your [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → **Settings → Redirect URIs**, add this exact URL and click **Save**:
    ```text
-   https://<your-vercel-domain>/callback
+   https://spotify-lyric-visualizer.vercel.app/callback
    ```
-3. Open your Vercel site, paste your **Client ID**, and click **Connect with Spotify**.
-   * *(Optional: to prefill a Client ID for your own private Vercel deployment, add `VITE_SPOTIFY_CLIENT_ID` in Vercel Project Settings → Environment Variables.)*
-   * **Browser Audio Note:** In the browser version, click **Ambient** in the top-left pill to enable **Tab / Screen Audio** *(best with Spotify Web Player)* or **Microphone / Line-In**. For automatic system-wide audio across speakers and 5.1/7.1 headsets with zero prompts, use the Windows `.exe`.
-   * **Mobile & Amazon Echo Show (Silk) Support:** The web app automatically adapts to phone screens and compact Echo Show displays (`960×480`) and includes a built-in **Keep Awake** (`Awake`) toggle combining the Screen Wake Lock API with a silent keep-alive audio loop (tap the screen once after opening on Echo Show to arm it).
+2. Open https://spotify-lyric-visualizer.vercel.app/, paste your **Client ID**, and click **Connect with Spotify**.
+   * **Browser Audio Note:** Click **Ambient** in the top-left pill to enable **Tab / Screen Audio** *(best with Spotify Web Player)* or **Microphone / Line-In**. For automatic system-wide audio across speakers and 5.1/7.1 headsets with zero prompts, use the Windows `.exe`.
+   * **Mobile & Amazon Echo Show (Silk) Support:** Automatically adapts to phone screens and compact Echo Show displays (`960×480`) and includes a built-in **Keep Awake** (`Awake`) toggle combining the Screen Wake Lock API with a silent keep-alive audio loop (tap the screen once after opening on Echo Show to arm it).
    * **Installable PWA:** Install directly from Chrome, Edge, or Android using the in-app **Install** button (or browser address bar icon), or on iOS Safari via **Share → Add to Home Screen** for a full-screen standalone app experience.
+
+### Self-Hosting Your Own Copy on Vercel
+The repository includes a preconfigured `vercel.json` for one-click deployment:
+1. Import **`LasseHartmann/Spotify-Visualizer`** in [Vercel](https://vercel.com/new) and click **Deploy** *(Vercel automatically skips Electron binary downloads and runs `npm run build:web`)*.
+2. Add `https://<your-vercel-domain>/callback` under **Redirect URIs** in your Spotify Developer Dashboard. *(Optional: set `VITE_SPOTIFY_CLIENT_ID` in Vercel Environment Variables to prefill your Client ID.)*
 
 ---
 
