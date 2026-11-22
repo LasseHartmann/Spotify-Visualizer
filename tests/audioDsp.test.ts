@@ -125,13 +125,13 @@ describe('AudioDsp', () => {
     expect(Math.abs(dsp.frame.colorIndex - startColor)).toBeGreaterThan(0.25);
   });
 
-  it('phase-locks the packed oscilloscope waveform on a rising zero-crossing', () => {
+  it('phase-locks the packed oscilloscope waveform on a center-origin rising zero-crossing', () => {
     const dsp = new AudioDsp();
     const freq = new Uint8Array(1024);
     freq[3] = 140;
     freq[4] = 120;
 
-    // Shifted sine wave starting out of phase (cos wave) so trigger must locate the rising zero-crossing
+    // Shifted sine wave starting out of phase (cos wave) so trigger must center the rising zero-crossing at x=128
     const time = new Uint8Array(2048);
     for (let i = 0; i < time.length; i++) {
       const val = Math.cos((i / 256) * Math.PI * 2) * 0.65;
@@ -143,11 +143,38 @@ describe('AudioDsp', () => {
       frame = dsp.processLive(freq, time, 48000, 2048, 1 / 60, i * 16.67);
     }
 
-    // Row 1 starts near center (128) and rises positively right after trigger
-    const w0 = frame.textureData[256];
-    const wPeak = frame.textureData[256 + 32];
-    expect(w0).toBeGreaterThanOrEqual(115);
-    expect(w0).toBeLessThanOrEqual(155);
-    expect(wPeak).toBeGreaterThan(175);
+    // Center midpoint (u=0.5, Y-axis origin) crosses 0V (128) going upward from negative to positive
+    const wBefore = frame.textureData[256 + 112];
+    const wCenter = frame.textureData[256 + 128];
+    const wAfter = frame.textureData[256 + 144];
+    expect(wBefore).toBeLessThan(115);
+    expect(wCenter).toBeGreaterThanOrEqual(115);
+    expect(wCenter).toBeLessThanOrEqual(145);
+    expect(wAfter).toBeGreaterThan(155);
+  });
+
+  it('tracks gravity-falling peak-hold caps in row 2 for Bars mode', () => {
+    const dsp = new AudioDsp();
+    const loud = makeToneBuffers(210, 140, 0.5);
+    const silent = makeSilentBuffers();
+
+    let frame = dsp.frame;
+    for (let i = 0; i < 20; i++) {
+      frame = dsp.processLive(loud.freq, loud.time, 48000, 2048, 1 / 60, i * 16.67);
+    }
+    const peakAtHit = frame.textureData[512 + 50];
+    expect(peakAtHit).toBeGreaterThan(120);
+
+    // Immediately after audio drops to silence, peak cap holds above the falling bar
+    for (let i = 20; i < 26; i++) {
+      frame = dsp.processLive(silent.freq, silent.time, 48000, 2048, 1 / 60, i * 16.67);
+    }
+    expect(frame.textureData[512 + 50]).toBeGreaterThan(frame.textureData[50]);
+
+    // After gravity fall (~1.5s), peak cap decays cleanly toward zero
+    for (let i = 26; i < 120; i++) {
+      frame = dsp.processLive(silent.freq, silent.time, 48000, 2048, 1 / 60, i * 16.67);
+    }
+    expect(frame.textureData[512 + 50]).toBeLessThan(20);
   });
 });

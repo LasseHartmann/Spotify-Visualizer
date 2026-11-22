@@ -1,4 +1,4 @@
-export type ShaderPresetId = 'cloud' | 'wave' | 'vinyl' | 'oscilloscope' | 'blank';
+export type ShaderPresetId = 'soft-cloud' | 'cloud' | 'bars' | 'vinyl' | 'oscilloscope' | 'blank';
 
 export type ColorMode = 'album-cycle' | 'album-lock' | 'custom';
 

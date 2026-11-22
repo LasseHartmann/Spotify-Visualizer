@@ -16,7 +16,7 @@ export interface AudioFrame {
   audioActive: number; // 0 = ambient/silent, 1 = real audio driving visuals
   rms: number;
   eqBars: [number, number, number, number, number];
-  textureData: Uint8Array; // 256 x 2 single-channel bytes (row 0: AGC FFT, row 1: AGC waveform)
+  textureData: Uint8Array; // 256 x 3 single-channel bytes (row 0: AGC FFT, row 1: phase-locked waveform, row 2: gravity peak-hold caps)
 }
 
 const FLUX_HISTORY = 38;
@@ -69,6 +69,11 @@ export class AudioDsp {
   private targetColorIndex = 0;
   private currentColorIndex = 0;
 
+  // Per-bin gravity peak-hold state for crisp hardware-EQ falling caps in Bars mode
+  private peakVals = new Float32Array(AUDIO_TEX_WIDTH);
+  private peakHoldTimers = new Float32Array(AUDIO_TEX_WIDTH);
+  private peakVel = new Float32Array(AUDIO_TEX_WIDTH);
+
   public readonly frame: AudioFrame = {
     subBass: 0,
     bass: 0,
@@ -85,7 +90,7 @@ export class AudioDsp {
     audioActive: 0,
     rms: 0,
     eqBars: [0, 0, 0, 0, 0],
-    textureData: new Uint8Array(AUDIO_TEX_WIDTH * 2),
+    textureData: new Uint8Array(AUDIO_TEX_WIDTH * 3),
   };
 
   constructor() {
@@ -97,6 +102,9 @@ export class AudioDsp {
     this.kickFluxHist.fill(0);
     this.snareFluxHist.fill(0);
     this.hiHatFluxHist.fill(0);
+    this.peakVals.fill(0);
+    this.peakHoldTimers.fill(0);
+    this.peakVel.fill(0);
     this.histCursor = 0;
     this.agcBandPeak = 0.16;
     this.agcWavePeak = 0.12;
@@ -356,17 +364,21 @@ export class AudioDsp {
     f.eqBars[3] = f.vocal;
     f.eqBars[4] = f.treble;
 
-    // 9. Pack AGC-normalized log-mapped FFT (row 0) & rising zero-crossing stabilized waveform (row 1)
+    // 9. Pack AGC-normalized log-mapped FFT (row 0), center-origin triggered waveform (row 1), & peak-hold caps (row 2)
     const maxBin = Math.min(freqBins.length - 1, Math.floor(14000 / binHz));
-    const waveGain = clamp(0.88 / Math.max(0.008, this.agcWavePeak), 1.0, 28.0);
+    // Blend gentle AGC with natural RMS dynamic range so quiet notes draw smaller than loud hits like a real scope
+    const dynamicScale = clamp(0.42 + Math.sqrt(Math.min(1, rms * 3.8)) * 0.58, 0.35, 1.0);
+    const waveGain = clamp((0.82 * dynamicScale) / Math.max(0.012, this.agcWavePeak), 0.9, 20.0);
 
-    // Find a phase-stable rising zero-crossing so Oscilloscope & Wave lock cleanly onto bass/vocal cycles
-    const waveWindow = Math.min(512, Math.max(1, Math.floor(waveLen * 0.5)));
-    let triggerIdx = 0;
+    // True center-origin rising-edge trigger: place the rising zero-crossing at the exact midpoint (u = 0.5, Y-axis!)
+    const waveWindow = Math.min(512, Math.max(2, Math.floor(waveLen * 0.5)));
+    const halfWindow = Math.floor(waveWindow * 0.5);
+    let windowStart = 0;
     if (hasSignal && waveLen > waveWindow + 4) {
-      const searchEnd = Math.min(waveLen - waveWindow - 1, Math.floor(waveLen * 0.5));
+      const searchStart = Math.max(1, halfWindow);
+      const searchEnd = Math.min(waveLen - halfWindow - 1, Math.floor(waveLen * 0.72));
       let bestSlope = 0;
-      for (let i = 1; i < searchEnd; i++) {
+      for (let i = searchStart; i < searchEnd; i++) {
         if (timeBins[i - 1] <= 128 && timeBins[i] > 128) {
           const slope = timeBins[i] - timeBins[i - 1];
           if (slope > bestSlope) bestSlope = slope;
@@ -374,10 +386,10 @@ export class AudioDsp {
       }
       if (bestSlope > 0) {
         const slopeThreshold = Math.max(1, bestSlope * 0.45);
-        for (let i = 1; i < searchEnd; i++) {
+        for (let i = searchStart; i < searchEnd; i++) {
           if (timeBins[i - 1] <= 128 && timeBins[i] > 128) {
             if (timeBins[i] - timeBins[i - 1] >= slopeThreshold) {
-              triggerIdx = i;
+              windowStart = Math.max(0, i - halfWindow);
               break;
             }
           }
@@ -391,20 +403,35 @@ export class AudioDsp {
       const fftVal = hasSignal
         ? clamp(Math.round((freqBins[logIdx] / 255) * gain * sens * 255), 0, 255)
         : 0;
-      f.textureData[x] = Math.round(f.textureData[x] * 0.52 + fftVal * 0.48);
+      const fftSmooth = Math.round(f.textureData[x] * 0.52 + fftVal * 0.48);
+      f.textureData[x] = fftSmooth;
+
+      // Gravity-falling peak-hold cap per bin (row 2)
+      if (fftSmooth >= this.peakVals[x]) {
+        this.peakVals[x] = fftSmooth;
+        this.peakHoldTimers[x] = 0.16;
+        this.peakVel[x] = 0;
+      } else if (this.peakHoldTimers[x] > 0) {
+        this.peakHoldTimers[x] -= dt;
+      } else {
+        this.peakVel[x] += dt * 360;
+        this.peakVals[x] = Math.max(fftSmooth, this.peakVals[x] - this.peakVel[x] * dt);
+      }
+      f.textureData[AUDIO_TEX_WIDTH * 2 + x] = clamp(Math.round(this.peakVals[x]), 0, 255);
 
       let centered = 0;
       if (waveLen > 0) {
-        const samplePos = triggerIdx + u * (waveWindow - 1);
+        const samplePos = windowStart + u * (waveWindow - 1);
         const i0 = Math.min(waveLen - 1, Math.floor(samplePos));
         const i1 = Math.min(waveLen - 1, i0 + 1);
         const frac = samplePos - i0;
         const interp = timeBins[i0] * (1 - frac) + timeBins[i1] * frac;
         centered = ((interp - 128) / 128) * waveGain;
       }
-      const targetWave = hasSignal ? clamp(Math.round(128 + centered * 118), 0, 255) : 128;
+      const targetWave = hasSignal ? clamp(Math.round(128 + centered * 116), 0, 255) : 128;
+      // Crisp real-time oscilloscope phosphor tracking (minimal frame smearing)
       f.textureData[AUDIO_TEX_WIDTH + x] = Math.round(
-        f.textureData[AUDIO_TEX_WIDTH + x] * 0.22 + targetWave * 0.78
+        f.textureData[AUDIO_TEX_WIDTH + x] * 0.12 + targetWave * 0.88
       );
     }
 
@@ -451,7 +478,19 @@ export class AudioDsp {
         Math.exp(-u * 2.4) *
         (0.24 + 0.16 * Math.sin(u * 12 - t * 2.4)) *
         (isSpotifyPlaying ? 1 : 0.45);
-      f.textureData[x] = clamp(Math.round(spec * 255), 0, 255);
+      const specByte = clamp(Math.round(spec * 255), 0, 255);
+      f.textureData[x] = specByte;
+      if (specByte >= this.peakVals[x]) {
+        this.peakVals[x] = specByte;
+        this.peakHoldTimers[x] = 0.14;
+        this.peakVel[x] = 0;
+      } else if (this.peakHoldTimers[x] > 0) {
+        this.peakHoldTimers[x] -= dt;
+      } else {
+        this.peakVel[x] += dt * 260;
+        this.peakVals[x] = Math.max(specByte, this.peakVals[x] - this.peakVel[x] * dt);
+      }
+      f.textureData[AUDIO_TEX_WIDTH * 2 + x] = clamp(Math.round(this.peakVals[x]), 0, 255);
       const wave =
         128 + Math.sin(u * Math.PI * 5 + t * 2.8) * 24 * (isSpotifyPlaying ? 1 : 0.35);
       f.textureData[AUDIO_TEX_WIDTH + x] = clamp(Math.round(wave), 0, 255);

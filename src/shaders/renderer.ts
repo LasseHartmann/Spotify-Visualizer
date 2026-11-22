@@ -39,7 +39,7 @@ interface CompiledProgram {
   };
 }
 
-const AUDIO_TEX_HEIGHT = 2;
+const AUDIO_TEX_HEIGHT = 3;
 
 export class ShaderRenderer {
   private canvas: HTMLCanvasElement;
@@ -51,7 +51,7 @@ export class ShaderRenderer {
   private artLoadGen = 0;
   private programs = new Map<ShaderPresetId, CompiledProgram>();
 
-  private activePreset: ShaderPresetId = 'cloud';
+  private activePreset: ShaderPresetId = 'soft-cloud';
   private pendingPreset: ShaderPresetId | null = null;
   private fade = 1.0;
 

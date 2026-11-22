@@ -60,11 +60,15 @@ uniform sampler2D uAudioTex;
 uniform sampler2D uAlbumArt;
 
 float sampleFFT(float x) {
-  return texture(uAudioTex, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+  return texture(uAudioTex, vec2(clamp(x, 0.0, 1.0), 0.1666667)).r;
 }
 
 float sampleWave(float x) {
-  return (texture(uAudioTex, vec2(clamp(x, 0.0, 1.0), 0.75)).r - 0.5) * 2.0;
+  return (texture(uAudioTex, vec2(clamp(x, 0.0, 1.0), 0.5)).r - 0.5) * 2.0;
+}
+
+float samplePeak(float x) {
+  return texture(uAudioTex, vec2(clamp(x, 0.0, 1.0), 0.8333333)).r;
 }
 
 float hash21(vec2 p) {
@@ -194,12 +198,11 @@ vec3 finalizeLedColor(vec3 col) {
 `;
 
 /**
- * 1. CLOUD — Volumetric Audio-Reactive Storm Clouds & Internal Lightning Blooms
- * Sculpted 3D cumulus clouds floating over a deep twilight stage that physically billow
- * on bass, flash from within on kick shockwaves, surge along the horizon with live FFT,
- * and catch luminous silver linings on vocals & snares.
+ * 1. SOFT CLOUD — Dreamy Liquid-Motion Clouds
+ * Silky domain-warped mist clouds that curl, stretch, and flow like slow liquid silk.
+ * Only soft, velvety liquid breathing with the music — zero sudden flashes or extreme snaps.
  */
-const CLOUD_FRAG = `${COMMON_HEADER}
+const SOFT_CLOUD_FRAG = `${COMMON_HEADER}
 void main() {
   vec2 uv = vUv;
   float aspect = uResolution.x / max(uResolution.y, 1.0);
@@ -208,215 +211,380 @@ void main() {
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.42);
-  vec3 highlightCol = mix(accentCol, vec3(1.0), 0.34);
+  vec3 tertiaryCol = getTertiaryColor();
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.48);
 
-  float punch = clamp(uPulse, 0.55, 1.4);
-  float kickHit = clamp(uKick * punch, 0.0, 1.0);
-  float snareHit = clamp(uSnare * punch, 0.0, 0.95);
-  float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
+  // Ultra-calm, silky audio modulation (strictly soft liquid swells, never frantic)
+  float gentleBass = clamp(uBass * 0.55 + uSubBass * 0.30, 0.0, 0.72);
+  float gentleVocal = clamp(uVocal * 0.65 + uLowMid * 0.25, 0.0, 0.75);
+  float softKick = clamp(uKick * 0.30, 0.0, 0.32);
 
-  // Bass & kick physically inflate the cloud field outward
-  float breathScale = 1.0 - bassPower * 0.08 - kickHit * 0.07 - uDrop * 0.035;
-  vec2 cp = p * breathScale;
+  // Slow continuous liquid drift (advected smoothly by calm uFlowTime + wall clock)
+  float t = uTime * 0.065 + uFlowTime * 0.095;
+  vec2 sp = p * (1.0 - gentleBass * 0.025);
 
-  // Deep atmospheric twilight sky base (preserves rich contrast so clouds & lyrics pop)
-  float bgScale = mix(1.0, 0.20, uDarkStage);
-  vec3 skyTop = uBackdrop * 0.52 + deepTint * (0.06 + uEnergy * 0.06) * bgScale;
-  vec3 skyBottom = uBackdrop * 0.68 + deepTint * (0.14 + bassPower * 0.14) * bgScale;
-  vec3 col = mix(skyBottom, skyTop, smoothstep(0.0, 1.0, uv.y));
-
-  // Subtle ambient backlight bloom behind cloud layer
-  col += primaryCol * exp(-r * r * 1.55) * (0.08 + bassPower * 0.14 + kickHit * 0.14) * bgScale;
-
-  // Two-layer domain-warped volumetric cumulus clouds
-  float t = uFlowTime * 0.20;
-  vec2 warp = vec2(
-    fbm(cp * 1.20 + vec2(t * 0.42, -t * 0.18)),
-    fbm(cp * 1.20 + vec2(-t * 0.28, t * 0.34) + vec2(4.7, 1.9))
+  // Triple-pass fluid domain warping: clouds curl, fold, and pour like slow-motion liquid silk
+  vec2 q = vec2(
+    fbm(sp * 1.15 + vec2(t * 0.45, -t * 0.28)),
+    fbm(sp * 1.15 + vec2(-t * 0.32, t * 0.38) + vec2(4.2, 1.7))
   );
-  float warpAmp = 0.48 + bassPower * 0.42 + kickHit * 0.25;
-  vec2 cloudPos = cp * 1.55 + (warp - 0.5) * warpAmp + vec2(t * 0.22, -t * 0.06);
-
-  float dMain = fbm5(cloudPos);
-  float dLit = fbm5(cloudPos + vec2(0.04, 0.12)); // Light from above / behind
-  float dBack = fbm(cp * 2.35 - vec2(t * 0.32, t * 0.12));
-
-  // Soft, fluffy cumulus masks (no harsh dark blotches)
-  float backCloud = smoothstep(0.42, 0.82, dBack);
-  float frontCloud = smoothstep(0.40, 0.78, dMain);
-  float cloudCore = smoothstep(0.56, 0.86, dMain);
-  // Volumetric directional top-light & luminous silver-lining rim
-  float topLight = clamp((dMain - dLit) * 3.8 + 0.48, 0.0, 1.0);
-  float silverRim = pow(clamp(1.0 - abs(dMain * 2.0 - 1.06), 0.0, 1.0), 3.4);
-
-  // Back drifting cloud mist layer
-  vec3 backShade = mix(deepTint * 0.45, primaryCol * (0.34 + uEnergy * 0.24), backCloud);
-  col = mix(col, max(col, backShade), backCloud * 0.58);
-
-  // Expanding kick-drum internal lightning shockwave racing through the cloud cores!
-  float waveR = uKickWave * 1.45;
-  float shockRing = exp(-abs(r - waveR) * 8.5) * (1.0 - smoothstep(0.50, 1.18, uKickWave)) * uKickWaveAmp;
-  float lightningCore = (shockRing * 0.95 + kickHit * exp(-r * r * 1.8) * 0.48) * (0.25 + cloudCore * 1.25);
-
-  // Sculpted front cumulus clouds (velvety shaded belly -> glowing album-colored tops -> internal beat glow)
-  vec3 cloudBelly = mix(uBackdrop * 0.55, deepTint * 0.42, 0.65);
-  vec3 cloudCrown = mixCoverColor(primaryCol, accentCol, 0.28 + topLight * 0.32) * (0.42 + bassPower * 0.36 + kickHit * 0.28);
-  vec3 frontShade = mix(cloudBelly, cloudCrown, smoothstep(0.18, 0.88, topLight));
-  frontShade += mixCoverColor(primaryCol, highlightCol, 0.55) * lightningCore * 0.78;
-  frontShade += mixCoverColor(accentCol, highlightCol, snareHit * 0.45) * silverRim * (0.26 + uVocal * 0.55 + snareHit * 0.58);
-
-  col = mix(col, frontShade, frontCloud * 0.82);
-
-  // Live Mirrored FFT Cumulus Horizon Bank rising from the bottom with glowing backlit ridge!
-  float symX = abs(uv.x - 0.5) * 2.0;
-  float freqPos = pow(symX, 0.88) * 0.86 + 0.015;
-  float fft = (
-    sampleFFT(freqPos - 0.020) * 0.25 +
-    sampleFFT(freqPos) * 0.50 +
-    sampleFFT(freqPos + 0.020) * 0.25
+  vec2 w = vec2(
+    fbm(sp * 1.45 + q * (1.35 + gentleBass * 0.32) + vec2(t * 0.30, t * 0.22) + vec2(1.9, 6.4)),
+    fbm(sp * 1.45 + q * (1.35 + gentleBass * 0.32) + vec2(-t * 0.25, -t * 0.30) + vec2(7.3, 2.8))
   );
-  float puffNoise = fbm(vec2(uv.x * 5.2 + t * 0.45, 2.2 - t * 0.18));
-  float bankH = 0.06 + fft * (0.27 + bassPower * 0.14) + (puffNoise - 0.45) * 0.11;
-  float bankBody = smoothstep(bankH + 0.08, bankH - 0.05, uv.y);
-  float bankDepth = clamp((bankH - uv.y) / max(bankH, 0.05), 0.0, 1.0);
-  float bankRim = exp(-abs(uv.y - bankH) * 26.0) * (0.24 + fft * 0.72 + kickHit * 0.22);
+  float liquidCloud = fbm5(sp * 1.35 + w * (1.15 + gentleBass * 0.28) + vec2(t * 0.16, -t * 0.10));
 
-  vec3 bankDark = mix(uBackdrop * 0.45, deepTint * 0.55, 0.65);
-  vec3 bankLit = mixCoverColor(primaryCol, accentCol, fft * 0.55) * (0.42 + fft * 0.42);
-  vec3 bankColor = mix(bankLit, bankDark, smoothstep(0.05, 0.75, bankDepth));
-  col = mix(col, bankColor, bankBody * 0.78);
-  col += mixCoverColor(primaryCol, highlightCol, 0.45) * bankRim * (0.58 + bassPower * 0.42);
+  // Soft volumetric directional shimmer inside the liquid folds
+  float litSample = fbm(sp * 1.35 + w * (1.15 + gentleBass * 0.28) + vec2(t * 0.16 + 0.08, -t * 0.10 + 0.10));
+  float softFold = clamp((liquidCloud - litSample) * 2.4 + 0.52, 0.0, 1.0);
 
-  // Subtle upper frequency aurora wisp balancing top edge
-  float topH = 0.05 + fft * (0.16 + uVocal * 0.10) + (puffNoise - 0.45) * 0.08;
-  float topRim = exp(-abs((1.0 - uv.y) - topH) * 24.0) * (0.14 + fft * 0.45);
-  col += accentCol * topRim * (0.45 + uVocal * 0.35);
+  // Smooth velvety cloud billows & delicate swirling current ribbons
+  float cloudBody = smoothstep(mix(0.24, 0.38, uDarkStage), 0.88, liquidCloud);
+  float swirlRibbon = pow(clamp(1.0 - abs(liquidCloud * 2.0 - 1.0), 0.0, 1.0), 2.8);
+  float warpMix = clamp(length(w - 0.5) * 1.45, 0.0, 1.0);
 
-  // Fine glowing cloud-mist sparkle on treble & hi-hats
-  float mistSparkle = smoothstep(0.72, 0.94, noise2d(cloudPos * 5.5 + vec2(0.0, t * 1.4))) * frontCloud;
-  col += highlightCol * mistSparkle * (uTreble * 0.38 + uHiHat * 0.65);
+  // Deep calm liquid sky backdrop
+  float bgScale = mix(1.0, 0.12, uDarkStage);
+  vec3 col = uBackdrop + deepTint * (0.07 + uEnergy * 0.08 + softKick * 0.07) * bgScale;
 
-  // Subtle perimeter kick glow for ambient screen-average LED backlights
-  col += primaryCol * smoothstep(0.62, 1.25, r) * (kickHit * 0.16 + bassPower * 0.08);
+  // Flowing primary liquid cloud masses
+  vec3 liquidHue = mixCoverColor(primaryCol, accentCol, warpMix * 0.48 + softFold * 0.22);
+  float bodyGlow = cloudBody * (0.24 + gentleBass * 0.28 + softKick * 0.14 + uEnergy * 0.12);
+  col += liquidHue * bodyGlow;
+
+  // Soft swirling vocal & melody eddies drifting inside the cloud currents
+  vec3 eddyCol = mixCoverColor(accentCol, tertiaryCol, 0.35);
+  col += eddyCol * swirlRibbon * (0.14 + gentleVocal * 0.28 + uTreble * 0.12) * mix(1.0, 0.72, uDarkStage);
+
+  // Subtle pearlescent crest highlights along the softest liquid folds
+  float crest = smoothstep(0.60, 0.94, liquidCloud) * softFold;
+  col += mix(primaryCol, vec3(1.0), 0.22) * crest * (0.12 + gentleBass * 0.14 + gentleVocal * 0.14);
+
+  // Gentle breathing perimeter aura for smooth LED screen backlights
+  col += primaryCol * smoothstep(0.55, 1.25, r) * (0.04 + gentleBass * 0.10 + softKick * 0.09) * mix(1.0, 0.55, uDarkStage);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
 `;
 
 /**
- * 2. WAVE — Layered Musical Ocean Swells & Live Acoustic Ribbon Crests
- * 5 depth-stacked translucent waves visibly driven by bass swells, live FFT bands,
- * phase-locked audio waveform, expanding kick crests, and shimmering treble foam.
+ * 2. CLOUD — Real Sculpted Fluffy Cumulus Clouds in an Audio-Reactive Sky
+ * Recognizable flat-bottomed, billowy cumulus clouds drifting across a twilight sky.
+ * Individual cloud lobes puff & swell smoothly with bass/mid/treble bands, kicks glow
+ * warmly through the dense cloud cores, and vocals/snares gild the sunlit silver linings.
  */
-const WAVE_FRAG = `${COMMON_HEADER}
+const CLOUD_FRAG = `${COMMON_HEADER}
+float smin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+float smax(float a, float b, float k) {
+  return -smin(-a, -b, k);
+}
+
+// Sculpted puffy cumulus cloud SDF: distinct plump rounded cloud domes + soft flat underside + cotton edge
+float cumulusSdf(vec2 q, float bL, float bC, float bR, float kickPump, float seed) {
+  float k = 0.028; // Tighter blend keeps each rounded cumulus puff lobe distinct & cloud-shaped!
+  float lift = kickPump * 0.020;
+
+  // Classic iconic cumulus cloud profile: wide flat-ish base + plump round domes rising in center & shoulders
+  float d = length(q - vec2(-0.02, 0.068 + bC * 0.046 + lift)) - (0.098 + bC * 0.028 + kickPump * 0.016);
+  d = smin(d, length(q - vec2( 0.088, 0.052 + bR * 0.038 + lift * 0.9)) - (0.082 + bR * 0.024 + kickPump * 0.013), k);
+  d = smin(d, length(q - vec2(-0.128, 0.034 + bL * 0.036 + lift * 0.85)) - (0.078 + bL * 0.024 + kickPump * 0.012), k);
+  d = smin(d, length(q - vec2(-0.215, 0.000 + bL * 0.018)) - (0.056 + bL * 0.016 + kickPump * 0.008), k);
+  d = smin(d, length(q - vec2( 0.185, 0.004 + bR * 0.020)) - (0.060 + bR * 0.016 + kickPump * 0.009), k);
+  d = smin(d, length(q - vec2( 0.258, -0.014 + bR * 0.012)) - (0.042 + bR * 0.011), k);
+  d = smin(d, length(q - vec2(-0.280, -0.016 + bL * 0.012)) - (0.040 + bL * 0.010), k);
+  // Base body bridge so the underside is continuous & plump
+  d = smin(d, length(q - vec2( 0.00, -0.008)) - (0.082 + bC * 0.015), 0.045);
+
+  // Softly flatten the bottom underside so it unmistakably reads as a floating cumulus cloud
+  d = smax(d, -0.046 - q.y, 0.026);
+
+  // Delicate fluffy cotton-edge wispiness (keeps domes super round & recognizable)
+  float edgeNoise = (fbm(q * 9.0 + vec2(seed, -seed * 0.6)) - 0.5) * 0.026;
+  return d + edgeNoise;
+}
+
+vec3 compositeCumulus(
+  vec3 bg,
+  vec2 q,
+  float bL,
+  float bC,
+  float bR,
+  float kickPump,
+  float internalGlow,
+  float rimPower,
+  float opacity,
+  float seed,
+  vec3 bellyCol,
+  vec3 bodyCol,
+  vec3 crownCol,
+  vec3 rimCol
+) {
+  float d = cumulusSdf(q, bL, bC, bR, kickPump, seed);
+  // Soft backlit atmospheric halo hugging the cloud silhouette
+  float halo = exp(-max(d, 0.0) * 20.0) * (0.14 + internalGlow * 0.30 + rimPower * 0.22) * opacity;
+  vec3 res = bg + rimCol * halo;
+
+  float mask = smoothstep(0.014, -0.010, d);
+  if (mask <= 0.001) return res;
+
+  // Authentic 3D cumulus lighting: bright sunlit upper puffs, fluffy internal folds, softly shaded underside
+  float dSun = cumulusSdf(q + vec2(-0.016, 0.042), bL, bC, bR, kickPump, seed);
+  float topLight = clamp((dSun - d) * 12.0 + 0.50, 0.0, 1.0);
+  float bellyGrad = smoothstep(-0.050, 0.085, q.y);
+  float folds = fbm(q * 9.5 + vec2(seed * 1.7, 3.1));
+  float shadeT = clamp(topLight * 0.54 + bellyGrad * 0.34 + (folds - 0.46) * 0.24, 0.0, 1.0);
+
+  vec3 cloudCol = mix(bellyCol, bodyCol, smoothstep(0.06, 0.56, shadeT));
+  cloudCol = mix(cloudCol, crownCol, smoothstep(0.50, 0.94, shadeT));
+
+  // Warm internal beat glow shining through the dense center of the cloud
+  float coreDepth = smoothstep(0.0, -0.068, d);
+  cloudCol += rimCol * coreDepth * internalGlow * 0.42;
+
+  // Crisp backlit silver-lining rim around upper cumulus puffs
+  float rim = exp(-abs(d) * 76.0) * smoothstep(-0.030, 0.070, q.y);
+  cloudCol += rimCol * rim * (0.36 + rimPower * 0.65);
+
+  return mix(res, cloudCol, mask * opacity);
+}
+
 void main() {
   vec2 uv = vUv;
   float aspect = uResolution.x / max(uResolution.y, 1.0);
   vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+  float r = length(p);
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 tertiaryCol = getTertiaryColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.54);
-  vec3 foamCol = mix(accentCol, vec3(1.0), 0.30);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.38);
+  vec3 highlightCol = mix(accentCol, vec3(1.0), 0.48);
 
-  float punch = clamp(uPulse, 0.55, 1.4);
+  float punch = clamp(uPulse, 0.55, 1.35);
   float kickHit = clamp(uKick * punch, 0.0, 1.0);
   float snareHit = clamp(uSnare * punch, 0.0, 0.95);
   float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
-  float flow = uFlowTime * 0.95;
 
-  // Smooth multi-tap FFT across horizontal axis (bass center -> highs edges, rounded smoothly at center)
-  float symX = smoothstep(0.0, 1.0, abs(uv.x - 0.5) * 2.0);
-  float freqX = pow(symX, 0.88) * 0.84 + 0.02;
-  float fft = (
-    sampleFFT(freqX - 0.032) * 0.16 +
-    sampleFFT(freqX - 0.015) * 0.22 +
-    sampleFFT(freqX) * 0.28 +
-    sampleFFT(freqX + 0.015) * 0.20 +
-    sampleFFT(freqX + 0.032) * 0.14
-  );
+  // Live smooth frequency bands for organic puff swells
+  float fSub = (sampleFFT(0.03) + sampleFFT(0.07) + sampleFFT(0.11)) / 3.0;
+  float fMid = (sampleFFT(0.24) + sampleFFT(0.32) + sampleFFT(0.40)) / 3.0;
+  float fVoc = (sampleFFT(0.45) + sampleFFT(0.55) + sampleFFT(0.64)) / 3.0;
+  float fHi  = (sampleFFT(0.72) + sampleFFT(0.80) + sampleFFT(0.88)) / 3.0;
 
-  // Lightly smoothed phase-locked live audio waveform for fluid acoustic crests
-  float liveWave = (
-    sampleWave(uv.x - 0.012) * 0.18 +
-    sampleWave(uv.x - 0.005) * 0.24 +
-    sampleWave(uv.x) * 0.32 +
-    sampleWave(uv.x + 0.005) * 0.16 +
-    sampleWave(uv.x + 0.012) * 0.10
-  );
+  // Deep starry twilight sky gradient (lots of breathing room so every cloud silhouette pops!)
+  float bgScale = mix(1.0, 0.22, uDarkStage);
+  vec3 skyTop = uBackdrop * 0.50 + deepTint * (0.05 + uEnergy * 0.05) * bgScale;
+  vec3 skyHorizon = uBackdrop * 0.72 + mix(deepTint, primaryCol, 0.30) * (0.14 + bassPower * 0.14) * bgScale;
+  vec3 col = mix(skyHorizon, skyTop, smoothstep(0.02, 0.96, uv.y));
 
-  // Expanding horizontal kick crest sweeping outward from center
-  float kickCrestWave = exp(-abs(symX - uKickWave * 1.15) * 7.0) *
-                        (1.0 - smoothstep(0.55, 1.15, uKickWave)) * uKickWaveAmp;
+  // Soft moon/sun glow behind the clouds pulsing with kicks & bass
+  vec2 sunPos = vec2(0.0, -0.06);
+  float sunDist = length(p - sunPos);
+  float kickShock = exp(-abs(sunDist - uKickWave * 1.35) * 6.5) *
+                    (1.0 - smoothstep(0.45, 1.15, uKickWave)) * uKickWaveAmp;
+  col += primaryCol * exp(-sunDist * sunDist * 2.0) * (0.12 + bassPower * 0.20 + kickHit * 0.20) * bgScale;
+  col += mixCoverColor(primaryCol, highlightCol, 0.4) * kickShock * 0.20;
 
-  // Atmospheric twilight sky gradient above waves
+  // Twinkling sky stars above & between the clouds sparkling on hi-hats & treble
+  vec2 starCell = floor(p * 28.0);
+  vec2 starLocal = fract(p * 28.0) - 0.5;
+  float starRnd = hash21(starCell);
+  if (starRnd > 0.94 && uv.y > 0.25) {
+    float twinkle = 0.45 + 0.55 * sin(uTime * (2.4 + starRnd * 5.0) + starRnd * 31.0);
+    float starDot = exp(-length(starLocal) * 15.0) * twinkle * (0.20 + uTreble * 0.45 + uHiHat * 0.75);
+    col += highlightCol * starDot;
+  }
+
+  // Dreamy 3D cloud colors (rich shaded belly, luminous album mid-body, sunlit pastel crown)
+  vec3 bellyDark = mix(uBackdrop * 0.62, deepTint * 0.60, 0.62);
+  vec3 bodyMid = mixCoverColor(deepTint, primaryCol, 0.72) * (0.58 + uEnergy * 0.20);
+  vec3 crownLit = mixCoverColor(primaryCol, highlightCol, 0.44) * (0.80 + bassPower * 0.16);
+  vec3 rimGlow = mixCoverColor(accentCol, vec3(1.0), 0.42);
+
+  float drift = uFlowTime * 0.055;
+  float wrapSpan = max(aspect + 1.05, 2.25);
+  float internalFlash = kickHit * 0.80 + kickShock * 0.70 + bassPower * 0.20;
+  float rimEnergy = uVocal * 0.65 + snareHit * 0.75 + uDrop * 0.22;
+
+  // LAYER 1: Small distant high clouds drifting gently across the upper starry sky
+  {
+    float x1 = mod(p.x - drift * 0.48 + 0.46 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
+    vec2 q1 = vec2(x1, p.y - 0.28) / 0.58;
+    col = compositeCumulus(
+      col, q1, fSub * 0.6, fMid * 0.75, fHi * 0.65, kickHit * 0.45,
+      internalFlash * 0.40, rimEnergy * 0.50, 0.58, 1.3,
+      bellyDark, bodyMid * 0.82, crownLit * 0.82, rimGlow
+    );
+
+    float x2 = mod(p.x - drift * 0.36 - 0.58 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
+    vec2 q2 = vec2(x2, p.y - 0.25) / 0.52;
+    col = compositeCumulus(
+      col, q2, fMid * 0.6, fVoc * 0.8, fHi * 0.7, kickHit * 0.40,
+      internalFlash * 0.40, rimEnergy * 0.50, 0.52, 4.7,
+      bellyDark, bodyMid * 0.82, crownLit * 0.82, rimGlow
+    );
+  }
+
+  // LAYER 2: Distinct floating hero cumulus clouds framing the sky cleanly around the lyrics
+  {
+    // Left hero cloud (bass-driven puffs)
+    float xL = mod(p.x - drift * 0.85 + 0.56 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
+    vec2 qL = vec2(xL, p.y - 0.06) / 0.82;
+    col = compositeCumulus(
+      col, qL, fSub, fMid, fVoc, kickHit * 0.90,
+      internalFlash * 0.78, rimEnergy * 0.85, 0.88, 8.2,
+      bellyDark, bodyMid, crownLit, rimGlow
+    );
+
+    // Right hero cloud (vocal & treble puffs)
+    float xR = mod(p.x - drift * 0.74 - 0.58 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
+    vec2 qR = vec2(xR, p.y - 0.11) / 0.78;
+    col = compositeCumulus(
+      col, qR, fMid, fVoc, fHi, kickHit * 0.82,
+      internalFlash * 0.75, rimEnergy * 0.92, 0.86, 13.5,
+      bellyDark, bodyMid, crownLit, rimGlow
+    );
+
+    // Hero lower-center cumulus cloud floating prominently beneath the lyrics!
+    float xC = mod(p.x - drift * 1.05 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
+    vec2 qC = vec2(xC, p.y + 0.26) / 0.98;
+    col = compositeCumulus(
+      col, qC, fSub, max(fSub * 0.65, fVoc), fHi, kickHit,
+      internalFlash * 0.95, rimEnergy, 0.95, 21.4,
+      bellyDark * 0.95, bodyMid * 1.02, crownLit * 1.04, rimGlow
+    );
+  }
+
+  // LAYER 3: Smaller drifting foreground clouds near bottom corners for parallax depth
+  {
+    float xB1 = mod(p.x - drift * 1.35 + 0.78 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
+    vec2 qB1 = vec2(xB1, p.y + 0.37) / 0.88;
+    col = compositeCumulus(
+      col, qB1, fSub, fMid, fVoc, kickHit * 0.95,
+      internalFlash * 0.70, rimEnergy * 0.72, 0.90, 29.1,
+      bellyDark * 0.88, bodyMid * 0.92, crownLit * 0.95, rimGlow
+    );
+  }
+
+  // Gentle edge backlight breath for screen-average LEDs
+  col += primaryCol * smoothstep(0.68, 1.30, r) * (kickHit * 0.14 + bassPower * 0.08);
+
+  fragColor = vec4(finalizeLedColor(col), 1.0);
+}
+`;
+
+/**
+ * 2. BARS — Bottom-Anchored Vertical Spectrum Equalizer Bars with Falling Peak-Hold Caps
+ * Clean musical left-to-right (bass -> vocal -> treble) rounded vertical bars rising from
+ * the bottom edge, topped by classic hardware-EQ gravity peak caps.
+ */
+const BARS_FRAG = `${COMMON_HEADER}
+void main() {
+  vec2 uv = vUv;
+  float aspect = uResolution.x / max(uResolution.y, 1.0);
+
+  vec3 primaryCol = getPrimaryColor();
+  vec3 accentCol = getAccentColor();
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.52);
+  vec3 capCol = mix(accentCol, vec3(1.0), 0.52);
+
+  float punch = clamp(uPulse, 0.55, 1.35);
+  float kickHit = clamp(uKick * punch, 0.0, 1.0);
+  float snareHit = clamp(uSnare * punch, 0.0, 0.95);
+  float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
+
+  // Clean dark stage leaving the upper-middle crisp for lyrics
   float bgScale = mix(1.0, 0.18, uDarkStage);
-  vec3 col = uBackdrop + deepTint * (0.07 + (1.0 - uv.y) * 0.14 + uEnergy * 0.12) * bgScale;
-  col += primaryCol * exp(-abs(uv.y - 0.52) * 3.8) * (0.08 + bassPower * 0.16 + kickHit * 0.16) * bgScale;
+  vec3 col = uBackdrop * 0.82 + deepTint * (0.05 + (1.0 - uv.y) * 0.10 + uEnergy * 0.08) * bgScale;
 
-  // LAYER 1 (Back): Giant Sub-Bass Horizon Ocean Swell
-  float swell1 = 0.52
-    + sin(uv.x * 3.8 + flow * 0.55) * (0.045 + bassPower * 0.055)
-    + cos(uv.x * 2.1 - flow * 0.35) * 0.03
-    + (fft - 0.25) * (0.20 + bassPower * 0.14)
-    + kickHit * 0.055;
-  float fill1 = smoothstep(swell1 + 0.02, swell1 - 0.015, uv.y) * exp(-max(swell1 - uv.y, 0.0) * 2.6);
-  float rim1 = exp(-abs(uv.y - swell1) * 42.0);
-  col += deepTint * fill1 * (0.36 + bassPower * 0.42);
-  col += primaryCol * rim1 * (0.26 + fft * 0.48 + kickHit * 0.26);
+  // Aspect-responsive bar count (~53 sleek bars on desktop, ~20 wide readable bars on mobile portrait)
+  float numBars = clamp(floor(aspect * 30.0), 20.0, 56.0);
+  float padX = 0.035;
+  float innerX = (uv.x - padX) / (1.0 - padX * 2.0);
+  float inBounds = step(0.0, innerX) * step(innerX, 1.0);
 
-  // LAYER 2 (Mid-Back): Live FFT Spectrum Translucent Ocean Sheet
-  float swell2 = 0.45
-    + sin(uv.x * 5.6 - flow * 0.78 + 1.2) * (0.038 + uLowMid * 0.045)
-    + fft * (0.22 + uEnergy * 0.12) * (1.0 - symX * 0.25)
-    + kickCrestWave * 0.085;
-  float fill2 = smoothstep(swell2 + 0.016, swell2 - 0.012, uv.y) * exp(-max(swell2 - uv.y, 0.0) * 3.8);
-  float rim2 = exp(-abs(uv.y - swell2) * 58.0);
-  vec3 sheet2Col = mixCoverColor(primaryCol, accentCol, 0.35 + fft * 0.35);
-  col += sheet2Col * fill2 * (0.28 + fft * 0.48 + kickHit * 0.22);
-  col += sheet2Col * rim2 * (0.45 + fft * 0.65 + kickCrestWave * 0.55);
+  float barSlot = innerX * numBars;
+  float barIdx = clamp(floor(barSlot), 0.0, numBars - 1.0);
+  float barLocalX = fract(barSlot) - 0.5; // -0.5 .. +0.5 within bar column
+  float barNorm = (barIdx + 0.5) / numBars; // 0 (sub-bass left) -> 1 (treble right)
 
-  // LAYER 3 (Mid): Vocal Harmonic Counter-Wave Ribbon
-  float vocalAmp = 0.075 + uVocal * 0.095 + snareHit * 0.05;
-  float swell3 = 0.49
-    - liveWave * (vocalAmp * 0.55)
-    + sin(uv.x * 7.4 + flow * 1.15) * (0.025 + uVocal * 0.045)
-    + cos(uv.x * 4.0 - flow * 0.6) * 0.02;
-  float fill3 = smoothstep(swell3 + 0.012, swell3 - 0.012, uv.y) * exp(-max(swell3 - uv.y, 0.0) * 5.2);
-  float rim3 = exp(-abs(uv.y - swell3) * 76.0);
-  float glow3 = exp(-abs(uv.y - swell3) * 16.0);
-  col += accentCol * fill3 * (0.16 + uVocal * 0.34);
-  col += accentCol * (rim3 * (0.58 + uVocal * 0.65 + snareHit * 0.55) + glow3 * (0.16 + uVocal * 0.28));
+  // Left-to-right musical frequency spectrum (log-packed in row 0, gravity peak-hold in row 2)
+  float freqPos = pow(barNorm, 0.94) * 0.90 + 0.012;
+  float fft = (
+    sampleFFT(freqPos - 0.008) * 0.22 +
+    sampleFFT(freqPos) * 0.56 +
+    sampleFFT(freqPos + 0.008) * 0.22
+  );
+  float peakFft = max(
+    fft,
+    samplePeak(freqPos - 0.008) * 0.20 +
+    samplePeak(freqPos) * 0.60 +
+    samplePeak(freqPos + 0.008) * 0.20
+  );
 
-  // LAYER 4 (Foreground Hero): Crisp Live Acoustic Waveform Crest + Caustic Underwater Glow
-  float heroAmp = 0.12 + bassPower * 0.09 + kickHit * 0.065 + uDrop * 0.05;
-  float trebleRipple = sin(uv.x * 36.0 - flow * 3.6) * (uTreble * 0.012 + uHiHat * 0.018);
-  float heroY = 0.46
-    + liveWave * heroAmp
-    + sin(uv.x * 4.8 + flow * 0.85) * 0.022
-    + kickCrestWave * 0.06
-    + trebleRipple;
-  float dHero = abs(uv.y - heroY);
-  float heroBody = smoothstep(heroY + 0.010, heroY - 0.008, uv.y) * exp(-max(heroY - uv.y, 0.0) * 4.2);
-  float heroCore = exp(-dHero * (105.0 - kickHit * 24.0));
-  float heroHalo = exp(-dHero * 16.0) * (0.28 + uEnergy * 0.36 + kickHit * 0.34);
+  // Subtle kick lift on bass bars & snare sparkle on high-mid bars
+  float kickBoost = kickHit * exp(-barNorm * 4.0) * 0.065;
+  float snareBoost = snareHit * exp(-pow((barNorm - 0.62) * 3.8, 2.0)) * 0.045;
 
-  col += mixCoverColor(primaryCol, tertiaryCol, 0.3) * heroBody * (0.24 + bassPower * 0.44 + kickHit * 0.28);
-  col += primaryCol * heroHalo;
-  col += mix(primaryCol, foamCol, 0.52 + uHiHat * 0.35) * heroCore * (0.85 + kickHit * 0.42 + uHiHat * 0.35);
+  float floorY = 0.015;
+  float barH = clamp(0.018 + fft * (0.60 + uEnergy * 0.08) + kickBoost + snareBoost, 0.018, 0.78);
+  float peakH = clamp(0.024 + peakFft * (0.60 + uEnergy * 0.08) + kickBoost * 0.6, barH + 0.012, 0.82);
 
-  // LAYER 5 (Subtle Mirrored Sky Wave Reflection for Full-Screen Depth & Backlight Balance)
-  float mirrorY = 0.68 + fft * 0.14 - liveWave * (heroAmp * 0.30) + cos(uv.x * 5.2 - flow * 0.7) * 0.018;
-  float dMirror = abs(uv.y - mirrorY);
-  float mirrorRibbon = exp(-dMirror * 64.0) * (0.24 + uVocal * 0.38 + uTreble * 0.32);
-  float mirrorGlow = exp(-dMirror * 14.0) * (0.09 + fft * 0.22);
-  col += mixCoverColor(accentCol, primaryCol, 0.4) * (mirrorRibbon + mirrorGlow);
+  // Soft ambient vertical glow rising behind the active bars
+  float backGlow = exp(-max(uv.y - (floorY + barH * 0.85), 0.0) * 6.5) * (0.08 + fft * 0.26) * inBounds;
+  col += mixCoverColor(primaryCol, accentCol, barNorm * 0.35) * backGlow;
 
-  // Soft bottom reflection shimmer & perimeter kick swell
-  float edgeGlow = smoothstep(0.32, 0.50, abs(uv.y - 0.5));
-  col += primaryCol * edgeGlow * (kickHit * 0.22 + bassPower * 0.12);
+  // Rounded-top vertical bar geometry in aspect-accurate pixel space
+  float colWidthUv = (1.0 - padX * 2.0) / numBars;
+  float halfBarW = 0.35; // leaves crisp 30% dark gaps between bars
+  float barRadiusUvY = halfBarW * colWidthUv * aspect;
+  float capCenterY = max(floorY + barRadiusUvY, floorY + barH - barRadiusUvY);
+
+  // Signed distance to rounded-top bar rising from floorY
+  vec2 barRel = vec2(barLocalX * colWidthUv * aspect, uv.y - capCenterY);
+  float distCap = length(vec2(barRel.x, max(barRel.y, 0.0))) - barRadiusUvY;
+  float distRectX = abs(barRel.x) - barRadiusUvY;
+  float dBar = (uv.y >= capCenterY) ? distCap : distRectX;
+  dBar = max(dBar, floorY - uv.y);
+
+  float aa = max(1.3 / max(uResolution.y, 1.0), 0.0012);
+  float barMask = smoothstep(aa, -aa, dBar) * inBounds;
+
+  if (barMask > 0.001) {
+    float vFrac = clamp((uv.y - floorY) / max(barH, 0.001), 0.0, 1.0);
+    // Rich gradient: deep saturated base -> bright primary body -> glowing accent tip
+    vec3 baseCol = mix(deepTint, primaryCol, smoothstep(0.0, 0.45, vFrac));
+    vec3 barCol = mixCoverColor(baseCol, accentCol, pow(vFrac, 1.55) * 0.78);
+    // Subtle inner vertical center sheen so each bar looks crisp & sculptural
+    float centerSheen = 1.0 - pow(abs(barLocalX) / halfBarW, 2.0) * 0.22;
+    float lum = (0.48 + vFrac * 0.44 + fft * 0.32 + kickHit * 0.12) * centerSheen;
+    // Bright luminous top rim inside the rounded cap
+    float topHighlight = smoothstep(0.84, 1.0, vFrac) * (0.28 + fft * 0.48);
+    barCol = barCol * lum + capCol * topHighlight;
+    col = mix(col, barCol, barMask);
+  }
+
+  // Crisp glowing halo hugging the top of active bars
+  float topGlow = exp(-length(vec2(barRel.x * 1.4, (uv.y - (floorY + barH)) * 1.2)) * 28.0) *
+                  (0.14 + fft * 0.42) * inBounds;
+  col += accentCol * topGlow;
+
+  // Classic floating gravity peak-hold cap hovering cleanly above each bar
+  float peakY = floorY + peakH;
+  float capThickness = max(0.0038, 2.4 / max(uResolution.y, 1.0));
+  vec2 capRel = vec2(max(abs(barLocalX) - (halfBarW - 0.06), 0.0) * colWidthUv * aspect, uv.y - peakY);
+  float dPeakCap = length(capRel) - capThickness * 0.75;
+  float peakMask = smoothstep(aa, -aa, dPeakCap) * inBounds * smoothstep(0.026, 0.055, peakH);
+  float peakHalo = exp(-max(dPeakCap, 0.0) * 95.0) * smoothstep(0.026, 0.055, peakH) * inBounds;
+  col += capCol * (peakMask * 0.95 + peakHalo * 0.34);
+
+  // Crisp subtle floor baseline & perimeter kick breath
+  float floorLine = exp(-abs(uv.y - floorY) * 260.0) * (0.22 + uEnergy * 0.28 + kickHit * 0.25);
+  col += mixCoverColor(primaryCol, accentCol, 0.35) * floorLine;
+  col += primaryCol * smoothstep(0.75, 1.0, 1.0 - uv.y) * (kickHit * 0.14 + bassPower * 0.08);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
@@ -633,9 +801,10 @@ void main() {
 `;
 
 /**
- * 4. OSCILLOSCOPE — Analog Phosphor CRT Studio Oscilloscope
- * Phase-locked zero-crossing waveform trace with slope-compensated uniform beam thickness,
- * dual-channel harmonic echo trace, subtle calibration graticule, and live bottom FFT spectrum.
+ * 5. OSCILLOSCOPE — Authentic Single-Line Lab Oscilloscope with X & Y Axes
+ * Real center-origin rising-edge triggered waveform trace (crosses (0, 0) upward at the Y-axis),
+ * crisp X (time) and Y (amplitude) axes with major/minor scale divisions, lowered cleanly
+ * below center with restrained signal-accurate amplitude.
  */
 const OSCILLOSCOPE_FRAG = `${COMMON_HEADER}
 void main() {
@@ -646,98 +815,102 @@ void main() {
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.52);
-  vec3 phosphorHot = mix(primaryCol, vec3(1.0), 0.48);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.45);
+  vec3 lineHot = mix(primaryCol, vec3(1.0), 0.58);
+  vec3 axisCol = mix(mix(deepTint, primaryCol, 0.55), vec3(0.85, 0.90, 0.96), 0.30);
 
-  float punch = clamp(uPulse, 0.55, 1.4);
+  float punch = clamp(uPulse, 0.55, 1.35);
   float kickHit = clamp(uKick * punch, 0.0, 1.0);
   float snareHit = clamp(uSnare * punch, 0.0, 0.95);
   float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
 
-  // Warm dark CRT phosphor glass backdrop
-  float bgScale = mix(1.0, 0.16, uDarkStage);
-  float crtVignette = clamp(1.0 - r * r * 0.36, 0.35, 1.0);
-  vec3 col = (uBackdrop * 0.72 + deepTint * (0.06 + uEnergy * 0.09 + kickHit * 0.12) * bgScale) * crtVignette;
+  // Clean dark CRT glass backdrop
+  float bgScale = mix(1.0, 0.14, uDarkStage);
+  float vignette = clamp(1.0 - r * r * 0.32, 0.42, 1.0);
+  vec3 col = (uBackdrop * 0.72 + deepTint * (0.04 + uEnergy * 0.04) * bgScale) * vignette;
 
-  // Studio Oscilloscope Calibration Graticule (10x8 divisions + fine center axis ticks)
-  vec2 gridUv = (uv - 0.5) * vec2(10.0, 8.0);
-  vec2 gridDist = abs(fract(gridUv + 0.5) - 0.5);
-  float majorGrid = max(
-    smoothstep(0.024, 0.006, gridDist.x),
-    smoothstep(0.024, 0.006, gridDist.y)
+  // Real Oscilloscope Coordinate System:
+  // X-axis (Time) lowered neatly to y = 0.36; Y-axis (Voltage/Amplitude) centered at x = 0.50
+  float axisX = 0.50;
+  float axisY = 0.36;
+  float pxX = max(uResolution.x, 1.0);
+  float pxY = max(uResolution.y, 1.0);
+
+  // Aspect-accurate square division spacing (10 horizontal divisions across screen)
+  float divX = 0.092;
+  float divY = divX * aspect;
+  float dxAxis = uv.x - axisX;
+  float dyAxis = uv.y - axisY;
+
+  // Scope graticule bounds: crisp ±4.5 X-divisions, ±2.5 Y-divisions around (axisX, axisY)
+  float scopeSpanX = divX * 4.75;
+  float scopeSpanY = divY * 2.55;
+  float inScopeX = smoothstep(scopeSpanX + 0.015, scopeSpanX - 0.005, abs(dxAxis));
+  float inScopeY = smoothstep(scopeSpanY + 0.015, scopeSpanY - 0.005, abs(dyAxis));
+  float inScope = inScopeX * inScopeY;
+
+  // Subtle faint calibration graticule lines aligned exactly to the X and Y divisions
+  vec2 gridDiv = vec2(dxAxis / divX, dyAxis / divY);
+  float gridLineX = smoothstep(1.1, 0.25, abs(fract(gridDiv.x + 0.5) - 0.5) * divX * pxX);
+  float gridLineY = smoothstep(1.1, 0.25, abs(fract(gridDiv.y + 0.5) - 0.5) * divY * pxY);
+  float graticule = max(gridLineX, gridLineY) * inScope;
+  col += axisCol * graticule * 0.085;
+
+  // Crisp X-axis (horizontal zero-voltage line) & Y-axis (vertical trigger time=0 line)
+  float distToXAxisPx = abs(dyAxis) * pxY;
+  float distToYAxisPx = abs(dxAxis) * pxX;
+  float xAxisLine = smoothstep(1.5, 0.45, distToXAxisPx) * inScopeX;
+  float yAxisLine = smoothstep(1.5, 0.45, distToYAxisPx) * inScopeY;
+
+  // Authentic major & minor (5 per div) oscilloscope scale ticks on BOTH X-axis and Y-axis
+  float xMajorDistPx = abs(fract(gridDiv.x + 0.5) - 0.5) * divX * pxX;
+  float xMinorDistPx = abs(fract(gridDiv.x * 5.0 + 0.5) - 0.5) * (divX * 0.2) * pxX;
+  float xMajorTick = smoothstep(1.3, 0.35, xMajorDistPx) * smoothstep(8.0, 6.2, distToXAxisPx) * inScopeX;
+  float xMinorTick = smoothstep(1.1, 0.30, xMinorDistPx) * smoothstep(4.2, 2.8, distToXAxisPx) * inScopeX;
+
+  float yMajorDistPx = abs(fract(gridDiv.y + 0.5) - 0.5) * divY * pxY;
+  float yMinorDistPx = abs(fract(gridDiv.y * 5.0 + 0.5) - 0.5) * (divY * 0.2) * pxY;
+  float yMajorTick = smoothstep(1.3, 0.35, yMajorDistPx) * smoothstep(8.0, 6.2, distToYAxisPx) * inScopeY;
+  float yMinorTick = smoothstep(1.1, 0.30, yMinorDistPx) * smoothstep(4.2, 2.8, distToYAxisPx) * inScopeY;
+
+  float axesMask = clamp(
+    (xAxisLine + yAxisLine) * 0.36 +
+    (xMajorTick + yMajorTick) * 0.34 +
+    (xMinorTick + yMinorTick) * 0.22,
+    0.0,
+    0.72
   );
-  float centerAxisX = smoothstep(0.0045, 0.0012, abs(uv.y - 0.5));
-  float centerAxisY = smoothstep(0.0035, 0.0010, abs(uv.x - 0.5));
-  float subTicksX = smoothstep(0.055, 0.015, abs(fract(uv.x * 50.0 + 0.5) - 0.5)) *
-                    smoothstep(0.014, 0.004, abs(uv.y - 0.5));
-  float subTicksY = smoothstep(0.055, 0.015, abs(fract(uv.y * 40.0 + 0.5) - 0.5)) *
-                    smoothstep(0.009, 0.003, abs(uv.x - 0.5));
+  col += axisCol * axesMask;
 
-  float gridMask = clamp(majorGrid * 0.55 + (centerAxisX + centerAxisY) * 0.55 + (subTicksX + subTicksY) * 0.45, 0.0, 1.0);
-  float gridGlow = (0.10 + uEnergy * 0.10 + kickHit * 0.14) * crtVignette;
-  col += mix(deepTint, primaryCol, 0.55) * gridMask * gridGlow;
+  // Tiny luminous trigger-origin marker right at (X = 0, Y = 0)
+  float originDistPx = length(vec2(dxAxis * pxX, dyAxis * pxY));
+  float originDot = smoothstep(3.4, 1.4, originDistPx) * (0.45 + uAudioActive * 0.45);
+  col += mix(accentCol, vec3(1.0), 0.5) * originDot;
 
-  // Live Mirrored FFT Spectrum Silhouette along the bottom graticule floor
-  float symX = abs(uv.x - 0.5) * 2.0;
-  float freqPos = pow(symX, 0.88) * 0.86 + 0.015;
-  float fft = (
-    sampleFFT(freqPos - 0.012) * 0.25 +
-    sampleFFT(freqPos) * 0.50 +
-    sampleFFT(freqPos + 0.012) * 0.25
-  );
-  float specHeight = 0.025 + fft * (0.20 + bassPower * 0.07);
-  float specFill = smoothstep(specHeight + 0.008, specHeight - 0.005, uv.y) * (0.18 + uv.y * 2.2);
-  float specLine = exp(-abs(uv.y - specHeight) * 120.0);
-  col += mixCoverColor(primaryCol, accentCol, 0.45) * specFill * (0.18 + fft * 0.34);
-  col += accentCol * specLine * (0.34 + fft * 0.65);
-
-  // PRIMARY PHOSPHOR TRACE (Channel 1 — Zero-crossing stabilized real audio waveform!)
-  // Slope-compensated perpendicular distance keeps beam crisp & uniform even on steep transients!
-  float amp1 = 0.21 + bassPower * 0.11 + kickHit * 0.075 + uDrop * 0.05;
+  // REAL SINGLE THIN LINE OSCILLOSCOPE TRACE (lowered to axisY, realistic controlled amplitude!)
+  // Crosses (axisX, axisY) upward on every triggered audio cycle just like a real hardware scope.
+  float amp = min(scopeSpanY * 0.72, 0.165);
   float dx = 1.0 / 256.0;
   float wL = sampleWave(uv.x - dx);
   float wC = sampleWave(uv.x);
   float wR = sampleWave(uv.x + dx);
 
-  float y1 = 0.5 + wC * amp1;
-  float slope1 = ((wR - wL) * amp1) / (2.0 * dx * max(aspect, 0.5));
-  float perpDist1 = abs(uv.y - y1) / sqrt(1.0 + slope1 * slope1);
+  float yWave = axisY + wC * amp;
+  float slope = ((wR - wL) * amp) / (2.0 * dx * max(aspect, 0.5));
+  float perpDistPx = (abs(uv.y - yWave) / sqrt(1.0 + slope * slope)) * pxY;
 
-  float beamCore1 = exp(-perpDist1 * (195.0 - kickHit * 48.0));
-  float beamInner1 = exp(-perpDist1 * (42.0 - kickHit * 10.0)) * (0.62 + uEnergy * 0.45 + kickHit * 0.48);
-  float beamHalo1 = exp(-perpDist1 * 10.5) * (0.24 + bassPower * 0.32 + kickHit * 0.34);
+  // Razor-sharp ~1.7px electron beam core + sleek tight phosphor glow
+  float thinCore = smoothstep(1.95, 0.55, perpDistPx) * inScopeX;
+  float tightGlow = exp(-perpDistPx * 0.26) * (0.46 + uEnergy * 0.22 + kickHit * 0.22 + snareHit * 0.15) * inScopeX;
+  float softScatter = exp(-perpDistPx * 0.06) * (0.07 + bassPower * 0.10 + kickHit * 0.10) * inScopeX;
 
-  // Illuminate nearby graticule lines with phosphor bounce light
-  col += primaryCol * gridMask * beamHalo1 * 0.65;
+  vec3 traceTint = mixCoverColor(primaryCol, accentCol, snareHit * 0.28 + uVocal * 0.14);
+  col += traceTint * softScatter;
+  col += traceTint * tightGlow;
+  col += lineHot * thinCore * (0.98 + kickHit * 0.18);
 
-  col += primaryCol * beamHalo1;
-  col += mixCoverColor(primaryCol, phosphorHot, 0.35) * beamInner1;
-  col += phosphorHot * beamCore1 * (0.92 + kickHit * 0.38 + uHiHat * 0.25);
-
-  // SECONDARY TRACE (Channel 2 — Harmonic Vocal Accent Beam, seam-free horizontal span)
-  float amp2 = (0.14 + uVocal * 0.10 + snareHit * 0.065) * (0.65 + 0.35 * uAudioActive);
-  float x2 = clamp(uv.x * 0.92 + 0.04, 0.0, 1.0);
-  float w2L = sampleWave(x2 - dx * 2.0);
-  float w2C = (sampleWave(x2 - dx) * 0.25 + sampleWave(x2) * 0.5 + sampleWave(x2 + dx) * 0.25);
-  float w2R = sampleWave(x2 + dx * 2.0);
-
-  float y2 = 0.5 - w2C * amp2;
-  float slope2 = (-(w2R - w2L) * amp2) / (4.0 * dx * max(aspect, 0.5));
-  float perpDist2 = abs(uv.y - y2) / sqrt(1.0 + slope2 * slope2);
-
-  float beamCore2 = exp(-perpDist2 * 185.0) * (0.48 + uVocal * 0.52 + snareHit * 0.45);
-  float beamHalo2 = exp(-perpDist2 * 26.0) * (0.24 + uVocal * 0.35 + snareHit * 0.35);
-  col += accentCol * (beamHalo2 + beamCore2);
-
-  // Expanding subtle horizontal trigger sweep pulse on kicks
-  float trigPulse = exp(-abs(symX - uKickWave * 1.15) * 9.0) *
-                    (1.0 - smoothstep(0.45, 1.10, uKickWave)) * uKickWaveAmp;
-  col += mixCoverColor(primaryCol, accentCol, 0.5) * trigPulse * (0.14 + beamHalo1 * 0.55);
-
-  // Subtle CRT phosphor scanlines & gentle edge backlight breath
-  float scanline = 0.965 + 0.035 * sin(gl_FragCoord.y * 1.5);
-  col *= scanline;
-  col += primaryCol * smoothstep(0.65, 1.25, r) * (kickHit * 0.16 + bassPower * 0.08);
+  // Subtle perimeter kick breath for LED screen backlights
+  col += primaryCol * smoothstep(0.72, 1.32, r) * (kickHit * 0.10 + bassPower * 0.05);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
@@ -745,37 +918,44 @@ void main() {
 
 export const SHADER_PRESETS: ShaderPresetMeta[] = [
   {
+    id: 'soft-cloud',
+    name: 'Soft Cloud',
+    key: '1',
+    tagline: 'Dreamy liquid-motion clouds with calm, velvety audio breathing',
+    fragmentSource: SOFT_CLOUD_FRAG,
+  },
+  {
     id: 'cloud',
     name: 'Cloud',
-    key: '1',
-    tagline: 'Volumetric storm clouds with bass swells, kick lightning & FFT horizon banks',
+    key: '2',
+    tagline: 'Sculpted fluffy cumulus clouds that puff, swell & glow with the music',
     fragmentSource: CLOUD_FRAG,
   },
   {
-    id: 'wave',
-    name: 'Wave',
-    key: '2',
-    tagline: '5 layered ocean & acoustic waves shaped by live bass, spectrum & melody',
-    fragmentSource: WAVE_FRAG,
+    id: 'bars',
+    name: 'Bars',
+    key: '3',
+    tagline: 'Bottom-up vertical spectrum bars with falling peak-hold caps',
+    fragmentSource: BARS_FRAG,
   },
   {
     id: 'vinyl',
     name: 'Vinyl',
-    key: '3',
+    key: '4',
     tagline: 'Spinning 12" vinyl with live album label, spectrum grooves & reactive stylus',
     fragmentSource: VINYL_FRAG,
   },
   {
     id: 'oscilloscope',
     name: 'Oscilloscope',
-    key: '4',
-    tagline: 'Phase-locked analog phosphor CRT waveform & live spectrum floor',
+    key: '5',
+    tagline: 'Real center-triggered single-line oscilloscope with X & Y axes',
     fragmentSource: OSCILLOSCOPE_FRAG,
   },
   {
     id: 'blank',
     name: 'Blank',
-    key: '5',
+    key: '6',
     tagline: 'Clean solid-color background with zero motion',
     fragmentSource: '',
   },
