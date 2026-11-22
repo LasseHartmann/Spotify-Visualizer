@@ -1,11 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type {
-  ColorMode,
-  LyricsLayoutMode,
-  RGB,
-  ShaderPresetId,
-  ThemePalette,
-} from '@shared/types';
+import type { ColorMode, RGB, ShaderPresetId, ThemePalette } from '@shared/types';
 import {
   AudioEngine,
   type AudioCaptureStatus,
@@ -20,9 +14,9 @@ interface ShaderCanvasProps {
   preset: ShaderPresetId;
   palette: ThemePalette;
   blankColor: RGB;
+  albumArtDataUrl: string | null;
   audioEnabled: boolean;
   colorMode: ColorMode;
-  layoutMode: LyricsLayoutMode;
   isPlaying: boolean;
   onAudioStatusChange: (status: AudioCaptureStatus) => void;
   onAudioDiagnosticChange?: (info: AudioDiagnosticInfo) => void;
@@ -39,9 +33,9 @@ export function ShaderCanvas({
   preset,
   palette,
   blankColor,
+  albumArtDataUrl,
   audioEnabled,
   colorMode,
-  layoutMode,
   isPlaying,
   onAudioStatusChange,
   onAudioDiagnosticChange,
@@ -51,18 +45,18 @@ export function ShaderCanvas({
   const rendererRef = useRef<ShaderRenderer | null>(null);
   const isPlayingRef = useRef(isPlaying);
   const colorModeRef = useRef(colorMode);
-  const layoutModeRef = useRef(layoutMode);
   const presetRef = useRef(preset);
   const paletteRef = useRef(palette);
   const blankColorRef = useRef(blankColor);
+  const albumArtRef = useRef(albumArtDataUrl);
   const audioEnabledRef = useRef(audioEnabled);
 
   isPlayingRef.current = isPlaying;
   colorModeRef.current = colorMode;
-  layoutModeRef.current = layoutMode;
   presetRef.current = preset;
   paletteRef.current = palette;
   blankColorRef.current = blankColor;
+  albumArtRef.current = albumArtDataUrl;
   audioEnabledRef.current = audioEnabled;
 
   useEffect(() => {
@@ -70,12 +64,12 @@ export function ShaderCanvas({
     if (!canvas) return;
 
     const renderer = new ShaderRenderer(canvas);
-    // Apply initial saved state immediately so Blank / Color Mode / Preset / Palette / Lyrics mode take effect on frame 1
+    // Apply initial saved state immediately so Blank / Color Mode / Preset / Palette take effect on frame 1
     renderer.setPreset(presetRef.current, true);
     renderer.setPalette(paletteRef.current);
     renderer.setBlankColor(blankColorRef.current, true);
+    renderer.setAlbumArt(albumArtRef.current);
     renderer.setColorCycle(colorModeRef.current === 'album-cycle');
-    renderer.setLyricsMode(layoutModeRef.current, true);
     rendererRef.current = renderer;
 
     const audioEngine = new AudioEngine(onAudioStatusChange, onAudioDiagnosticChange);
@@ -103,7 +97,7 @@ export function ShaderCanvas({
         frame = { ...frame, ...window.__svOverrideAudioFrame };
       }
 
-      renderer.render(dt, frame);
+      renderer.render(dt, frame, isPlayingRef.current);
 
       const root = document.documentElement.style;
       root.setProperty('--beat', frame.kick.toFixed(3));
@@ -151,12 +145,12 @@ export function ShaderCanvas({
   }, [blankColor]);
 
   useEffect(() => {
-    rendererRef.current?.setColorCycle(colorMode === 'album-cycle');
-  }, [colorMode]);
+    rendererRef.current?.setAlbumArt(albumArtDataUrl);
+  }, [albumArtDataUrl]);
 
   useEffect(() => {
-    rendererRef.current?.setLyricsMode(layoutMode);
-  }, [layoutMode]);
+    rendererRef.current?.setColorCycle(colorMode === 'album-cycle');
+  }, [colorMode]);
 
   useEffect(() => {
     audioEngineRef.current?.setEnabled(audioEnabled);

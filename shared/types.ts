@@ -1,4 +1,4 @@
-export type ShaderPresetId = 'atlas' | 'orbit' | 'terrain' | 'symphony' | 'waves' | 'blank';
+export type ShaderPresetId = 'cloud' | 'wave' | 'vinyl' | 'oscilloscope' | 'blank';
 
 export type ColorMode = 'album-cycle' | 'album-lock' | 'custom';
 
@@ -92,12 +92,6 @@ export interface NativeAudioPacket {
   sampleRate: number;
   freqBins: Uint8Array;
   timeBins: Uint8Array;
-  leftFreqBins?: Uint8Array;
-  rightFreqBins?: Uint8Array;
-  leftTimeBins?: Uint8Array;
-  rightTimeBins?: Uint8Array;
-  stereoWidth?: number; // 0..1 (0 = mono, 1 = wide stereo)
-  stereoBalance?: number; // -1..+1 (-1 = hard left, +1 = hard right)
 }
 
 export interface NativeAudioStatus {

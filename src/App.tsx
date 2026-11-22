@@ -51,22 +51,20 @@ const SWEEP_MODE_CYCLE: SweepMode[] = ['auto', 'always', 'off'];
 function loadSavedPreset(): ShaderPresetId {
   const saved = localStorage.getItem('sv:preset:v3');
   if (
-    saved === 'atlas' ||
-    saved === 'orbit' ||
-    saved === 'terrain' ||
-    saved === 'symphony' ||
-    saved === 'waves' ||
+    saved === 'cloud' ||
+    saved === 'wave' ||
+    saved === 'vinyl' ||
+    saved === 'oscilloscope' ||
     saved === 'blank'
   ) {
     return saved;
   }
   const legacy = localStorage.getItem('sv:preset:v2');
-  if (legacy === 'spectrum') return 'atlas';
-  if (legacy === 'eclipse') return 'orbit';
-  if (legacy === 'pulse') return 'symphony';
-  if (legacy === 'tide') return 'waves';
   if (legacy === 'blank') return 'blank';
-  return 'atlas';
+  if (legacy === 'tide') return 'wave';
+  if (legacy === 'eclipse') return 'vinyl';
+  if (legacy === 'spectrum') return 'oscilloscope';
+  return 'cloud';
 }
 
 function loadSavedLayout(): LyricsLayoutMode {
@@ -720,26 +718,22 @@ export function App() {
           revealHud();
           break;
         case '1':
-          selectPreset('atlas');
+          selectPreset('cloud');
           revealHud();
           break;
         case '2':
-          selectPreset('orbit');
+          selectPreset('wave');
           revealHud();
           break;
         case '3':
-          selectPreset('terrain');
+          selectPreset('vinyl');
           revealHud();
           break;
         case '4':
-          selectPreset('symphony');
+          selectPreset('oscilloscope');
           revealHud();
           break;
         case '5':
-          selectPreset('waves');
-          revealHud();
-          break;
-        case '6':
           selectPreset('blank');
           revealHud();
           break;
@@ -822,9 +816,9 @@ export function App() {
         preset={preset}
         palette={effectivePalette}
         blankColor={blankColor}
+        albumArtDataUrl={albumArtDataUrl}
         audioEnabled={audioEnabled}
         colorMode={colorMode}
-        layoutMode={layoutMode}
         isPlaying={Boolean(playback?.isPlaying)}
         onAudioStatusChange={setAudioStatus}
         onAudioDiagnosticChange={setAudioDiag}

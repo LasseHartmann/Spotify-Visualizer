@@ -9,7 +9,6 @@ import type {
   VisualizerApi,
 } from '@shared/types';
 import { fetchLrclibLyrics } from '@shared/lyricsLookup';
-import { StereoStreamAnalyser } from '@/audio/stereoAnalyser';
 
 const SPOTIFY_SCOPES = [
   'user-read-currently-playing',
@@ -186,8 +185,10 @@ function readDefaultClientId(): string {
 class WebAudioTap {
   private stream: MediaStream | null = null;
   private audioCtx: AudioContext | null = null;
-  private stereoAnalyser: StereoStreamAnalyser | null = null;
+  private analyser: AnalyserNode | null = null;
   private rafId = 0;
+  private freqBins = new Uint8Array(1024);
+  private timeBins = new Uint8Array(2048);
   private frameListeners = new Set<(packet: NativeAudioPacket) => void>();
   private stoppedListeners = new Set<() => void>();
 
@@ -237,11 +238,17 @@ class WebAudioTap {
         await ctx.resume();
       }
 
-      const stereoAnalyser = new StereoStreamAnalyser(ctx, audioOnlyStream);
+      const sourceNode = ctx.createMediaStreamSource(audioOnlyStream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0;
+      sourceNode.connect(analyser);
 
       this.stream = mediaStream;
       this.audioCtx = ctx;
-      this.stereoAnalyser = stereoAnalyser;
+      this.analyser = analyser;
+      this.freqBins = new Uint8Array(analyser.frequencyBinCount);
+      this.timeBins = new Uint8Array(analyser.fftSize);
 
       const handleEnded = () => {
         this.stop(true);
@@ -251,10 +258,17 @@ class WebAudioTap {
       }
 
       const pump = () => {
-        if (!this.stereoAnalyser || !this.audioCtx) return;
+        if (!this.analyser || !this.audioCtx) return;
         this.rafId = requestAnimationFrame(pump);
 
-        const packet = this.stereoAnalyser.readPacket();
+        this.analyser.getByteFrequencyData(this.freqBins);
+        this.analyser.getByteTimeDomainData(this.timeBins);
+
+        const packet: NativeAudioPacket = {
+          sampleRate: this.audioCtx.sampleRate || 48000,
+          freqBins: this.freqBins,
+          timeBins: this.timeBins,
+        };
         for (const cb of this.frameListeners) {
           cb(packet);
         }
@@ -281,7 +295,7 @@ class WebAudioTap {
       void this.audioCtx.close().catch(() => {});
       this.audioCtx = null;
     }
-    this.stereoAnalyser = null;
+    this.analyser = null;
 
     if (notifyStopped) {
       for (const cb of this.stoppedListeners) {

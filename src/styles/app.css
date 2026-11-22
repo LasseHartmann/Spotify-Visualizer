@@ -989,8 +989,8 @@ body,
 .glass-pill {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px;
+  gap: 4px;
+  padding: 5px;
   border-radius: 999px;
   background: rgba(6, 10, 18, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.15);
@@ -1004,9 +1004,9 @@ body,
   background: transparent;
   color: rgba(248, 250, 252, 0.82);
   font-family: var(--font-display);
-  font-size: 0.76rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  padding: 6px 8px;
+  padding: 6px 10px;
   border-radius: 999px;
   cursor: pointer;
   display: inline-flex;

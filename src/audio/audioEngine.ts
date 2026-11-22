@@ -1,7 +1,6 @@
 import type { NativeAudioPacket, NativeAudioStatus } from '@shared/types';
 import { isWebPlatform } from '@/platform/webBridge';
 import { AudioDsp, type AudioFrame } from './dsp';
-import { StereoStreamAnalyser } from './stereoAnalyser';
 
 export type { AudioFrame } from './dsp';
 
@@ -41,8 +40,10 @@ export class AudioEngine {
   // Built-in Electron Chromium loopback fallback resources
   private fallbackStream: MediaStream | null = null;
   private fallbackCtx: AudioContext | null = null;
-  private fallbackAnalyser: StereoStreamAnalyser | null = null;
+  private fallbackAnalyser: AnalyserNode | null = null;
   private fallbackRafId = 0;
+  private fallbackFreqBins = new Uint8Array(1024);
+  private fallbackTimeBins = new Uint8Array(2048);
   private fallbackAttempted = false;
   private startupTimerId: number | null = null;
   private captureGen = 0;
@@ -293,11 +294,17 @@ export class AudioEngine {
         return false;
       }
 
-      const stereoAnalyser = new StereoStreamAnalyser(ctx, audioOnlyStream);
+      const sourceNode = ctx.createMediaStreamSource(audioOnlyStream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0;
+      sourceNode.connect(analyser);
 
       this.fallbackStream = mediaStream;
       this.fallbackCtx = ctx;
-      this.fallbackAnalyser = stereoAnalyser;
+      this.fallbackAnalyser = analyser;
+      this.fallbackFreqBins = new Uint8Array(analyser.frequencyBinCount);
+      this.fallbackTimeBins = new Uint8Array(analyser.fftSize);
 
       for (const track of audioTracks) {
         track.addEventListener(
@@ -321,7 +328,14 @@ export class AudioEngine {
         if (this.captureGen !== gen || !this.fallbackAnalyser || !this.fallbackCtx) return;
         this.fallbackRafId = requestAnimationFrame(pump);
 
-        this.latestNativePacket = this.fallbackAnalyser.readPacket();
+        this.fallbackAnalyser.getByteFrequencyData(this.fallbackFreqBins);
+        this.fallbackAnalyser.getByteTimeDomainData(this.fallbackTimeBins);
+
+        this.latestNativePacket = {
+          sampleRate: this.fallbackCtx.sampleRate || 48000,
+          freqBins: this.fallbackFreqBins,
+          timeBins: this.fallbackTimeBins,
+        };
         this.lastNativePacketAtMs = performance.now();
       };
 
@@ -366,8 +380,7 @@ export class AudioEngine {
         pkt.sampleRate || 48000,
         2048,
         dtSec,
-        nowMs,
-        pkt
+        nowMs
       );
       if (frame.rms > 0.0006 || frame.audioActive > 0.15) {
         this.lastSignalAtMs = nowMs;

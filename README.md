@@ -11,11 +11,11 @@ A full-screen desktop & web visualizer that pairs real-time **audio-reactive Web
 
 ## Features
 
-* **4 Calm, Audio-Reactive WebGL2 Styles + Blank Mode (`1`–`5`):**
-  1. **Pulse Wash** — Smooth concert wall wash with gentle beat bloom & live FFT curtains
-  2. **Bass Eclipse** — High-contrast dark stage with a calm 64-spoke 360° radial FFT halo
-  3. **Chromatic Tide** — Edge-to-edge silky dual-tone audio waveform & bass energy tides
-  4. **Spectrum Wall** — 48 full-bleed fluid frequency pillars
+* **4 Music-Reactive WebGL2 Styles + Blank Mode (`1`–`5`):**
+  1. **Cloud** — Volumetric storm clouds with bass billowing, internal kick-lightning blooms & live FFT horizon banks
+  2. **Wave** — 5 depth-layered ocean & acoustic waves shaped by live bass swells, spectrum & melody crests
+  3. **Vinyl** — Spinning 12" vinyl record with real album cover label, live spectrum micro-grooves, kick shockwaves & reactive stylus
+  4. **Oscilloscope** — Phase-locked analog phosphor CRT waveform trace with calibration graticule & live spectrum floor
   5. **Blank** — Clean solid-color background with zero shader motion (great for pure lyrics focus)
 * **True Album Cover Colors + Custom Background Color Picker (`C`):** Preserves real jet-black negative space, neutral white/silver, warm gold, and chromatic accents without injecting fake blue/green tints onto dark or black-and-white covers. Choose **Album Cycle**, **Album Lock**, or pick any **Custom Color** (quick swatches, color wheel, or `#HEX` input—with automatic dark-ink contrast on light Blank backgrounds).
 * **Native Windows WASAPI Audio Loopback:** Uses a lightweight bundled Windows Core Audio helper (`wasapi-tap.exe`) so real-time audio reactivity works out of the box across stereo speakers, Bluetooth, Dolby Atmos, and **5.1 / 7.1 surround gaming headsets**—with zero screen-capture border and automatic device switching.
@@ -76,7 +76,7 @@ The repository includes a preconfigured `vercel.json` for one-click deployment:
 | --- | --- |
 | `Space` | Play / Pause music |
 | `←` / `→` | Previous / Next track |
-| `1` – `5` | Switch background style (`Pulse Wash`, `Bass Eclipse`, `Chromatic Tide`, `Spectrum Wall`, `Blank`) |
+| `1` – `5` | Switch background style (`Cloud`, `Wave`, `Vinyl`, `Oscilloscope`, `Blank`) |
 | `L` | Cycle letter-by-letter sweep (`Auto` / `All` / `Off`) |
 | `V` | Show / hide album cover showcase |
 | `C` | Cycle color mode (**Album Cycle** / **Album Lock** / **Custom**) |
