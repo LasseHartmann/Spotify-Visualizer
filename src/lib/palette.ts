@@ -64,36 +64,85 @@ function hueDistance(h1: number, h2: number): number {
 }
 
 /**
- * Keeps a genuine chromatic album color true to its real hue & character
- * (warm gold stays metallic gold, crimson stays bold red — never artificially neon-shifted).
+ * Estimates how strongly a color visually "glows" and jumps into the human eye (0..1).
+ * Vivid reds, magentas, electric cyans, and bright golds score high; dull browns, tans,
+ * and dark muted earth tones score low so a small glowing accent naturally outshines a
+ * large dull brown background.
  */
-function toTrueCoverChromatic(h: number, s: number, l: number): RGB {
-  const cleanS = clamp(s * 1.15, Math.min(0.62, s), 0.96);
-  const cleanL = clamp(l * 0.45 + 0.30, 0.44, 0.60);
-  return hslToRgb(h, cleanS, cleanL);
+export function computePerceptualGlow(
+  r: number,
+  g: number,
+  b: number,
+  h: number,
+  s: number,
+  chroma: number
+): number {
+  const maxC = Math.max(r, g, b);
+  const baseGlow =
+    Math.pow(clamp(chroma, 0, 1), 2.2) * (0.28 + 0.72 * maxC) * (0.35 + 0.65 * s);
+
+  // Dull earth tones (brown / tan / muddy olive) sit in orange-yellow hues with low brightness or saturation
+  const inEarthHue = h >= 0.032 && h <= 0.22;
+  const lowBrightness = clamp((0.72 - maxC) / 0.34, 0, 1);
+  const lowSat = clamp((0.58 - s) / 0.28, 0, 1);
+  const brownDamp = inEarthHue
+    ? 1 - 0.68 * Math.max(lowBrightness * 0.85, lowSat * 0.75)
+    : 1;
+
+  // Helmholtz–Kohlrausch visual salience boost for vivid eye-catching hues (red, magenta, electric cyan)
+  const redPop = Math.max(0, 1 - hueDistance(h, 0.0) / 0.065);
+  const magentaPop = Math.max(0, 1 - hueDistance(h, 0.9) / 0.08);
+  const cyanPop = Math.max(0, 1 - hueDistance(h, 0.52) / 0.07);
+  const huePop = Math.max(redPop * 0.42, magentaPop * 0.28, cyanPop * 0.2);
+  const popBoost =
+    1 +
+    huePop *
+      clamp((chroma - 0.45) / 0.35, 0, 1) *
+      clamp((maxC - 0.55) / 0.35, 0, 1);
+
+  return clamp(baseGlow * brownDamp * popBoost, 0, 1);
+}
+
+/**
+ * Keeps a genuine chromatic album color faithful to its real hue AND its natural "glow":
+ * glowing reds/golds/blues stay vibrant and luminous, while genuinely dull earth tones
+ * (like brown on an all-brown cover) stay calm and understated instead of turning neon orange.
+ */
+function toTrueCoverChromatic(h: number, s: number, l: number, avgGlow: number): RGB {
+  const glowFactor = clamp(avgGlow / 0.42, 0, 1);
+  const targetS =
+    (1 - glowFactor) * clamp(s * 0.96, 0.18, 0.56) +
+    glowFactor * clamp(s * 1.12, Math.min(0.66, s), 0.98);
+  const targetL =
+    (1 - glowFactor) * clamp(l * 0.62 + 0.14, 0.28, 0.44) +
+    glowFactor * clamp(l * 0.46 + 0.29, 0.45, 0.60);
+  return hslToRgb(h, targetS, targetL);
 }
 
 interface ChromaticCluster {
   pixelCount: number;
   weight: number;
+  avgGlow: number;
   h: number;
   s: number;
   l: number;
 }
 
 /**
- * Perceptual surface + accent palette extractor:
+ * Perceptual surface + glow-weighted accent palette extractor:
  * - Recognizes TRUE BLACK backgrounds (preserving real black negative space on covers like
  *   Daft Punk's Random Access Memories, Ren's Sick Boi, or pure B&W covers).
  * - Recognizes TRUE WHITE / SILVER neutral highlights without tinting them blue or green.
- * - Rejects tiny <2.2% JPEG/shadow chroma smudges so B&W covers stay purely Black & White/Silver.
- * - Extracts the actual individual colors present on the cover (e.g. Black + Gold + Silver, or Black + Red).
+ * - Weights colors by perceptual "glow" (visual salience), so eye-catching glowing accents
+ *   like vivid red jump to the foreground even over a much larger dull brown background.
+ * - Rejects tiny JPEG/shadow chroma smudges so B&W covers stay purely Black & White/Silver.
  */
 export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
   const NUM_BUCKETS = 36;
   const buckets = Array.from({ length: NUM_BUCKETS }, () => ({
     pixelCount: 0,
     weight: 0,
+    glowSum: 0,
     hSumCos: 0,
     hSumSin: 0,
     sSum: 0,
@@ -134,15 +183,16 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
       continue;
     }
 
-    // 3. Genuine chromatic pixel (unmistakable visual color: chroma >= 0.12 AND s >= 0.20)
+    // 3. Genuine chromatic pixel weighted by perceptual "glow" (vivid red pops far above dull brown)
     const idx = Math.min(NUM_BUCKETS - 1, Math.floor(h * NUM_BUCKETS));
     const bucket = buckets[idx];
-    const lightBoost = 1 - Math.abs(l - 0.50) * 0.9;
-    const weight = (0.45 + chroma * 1.1) * Math.max(0.3, lightBoost);
+    const glow = computePerceptualGlow(r, g, b, h, s, chroma);
+    const weight = 0.035 + glow * 4.2;
     const angle = h * Math.PI * 2;
 
     bucket.pixelCount += 1;
     bucket.weight += weight;
+    bucket.glowSum += glow;
     bucket.hSumCos += Math.cos(angle) * weight;
     bucket.hSumSin += Math.sin(angle) * weight;
     bucket.sSum += s * weight;
@@ -156,7 +206,7 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
   const avgSilverLum =
     whiteSilverPixels > 0 ? clamp(whiteSilverLumSum / whiteSilverPixels, 0.58, 0.96) : 0.88;
 
-  // Group contiguous chromatic hue buckets into real distinct color peaks
+  // Group contiguous chromatic hue buckets into distinct color peaks
   const mergedClusters: ChromaticCluster[] = [];
   for (let i = 0; i < NUM_BUCKETS; i++) {
     const curr = buckets[i];
@@ -164,9 +214,9 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
     const prev = buckets[(i + NUM_BUCKETS - 1) % NUM_BUCKETS];
     const next = buckets[(i + 1) % NUM_BUCKETS];
 
-    // Local peak check (or merge neighboring bins)
     const totalPx = curr.pixelCount + prev.pixelCount * 0.5 + next.pixelCount * 0.5;
     const totalW = curr.weight + prev.weight * 0.5 + next.weight * 0.5;
+    const totalGlow = curr.glowSum + prev.glowSum * 0.5 + next.glowSum * 0.5;
     const cosSum = curr.hSumCos + prev.hSumCos * 0.5 + next.hSumCos * 0.5;
     const sinSum = curr.hSumSin + prev.hSumSin * 0.5 + next.hSumSin * 0.5;
     const angle = Math.atan2(sinSum, cosSum);
@@ -174,6 +224,7 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
     mergedClusters.push({
       pixelCount: totalPx,
       weight: totalW,
+      avgGlow: totalPx > 0 ? totalGlow / totalPx : 0,
       h: ((angle / (Math.PI * 2)) + 1) % 1,
       s: curr.sSum / curr.weight,
       l: curr.lSum / curr.weight,
@@ -182,16 +233,42 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
 
   mergedClusters.sort((a, b) => b.weight - a.weight);
 
-  // Deduplicate peaks within 28 degrees and enforce a real >= 2.2% area threshold
-  // (keeps intentional accents like RAM's gold helmet & Sick Boi's red, rejects 0.5% B&W JPEG tint!)
-  const MIN_CHROMATIC_AREA = 0.022;
-  const realChromatics: ChromaticCluster[] = [];
+  // Deduplicate peaks within 28 degrees and apply glow-aware area threshold:
+  // blazing glowing accents (red/neon) register down to 1.4%, dull tones need >= 2.4%,
+  // while <= 1% B&W JPEG artifacts are always rejected!
+  const candidateChromatics: ChromaticCluster[] = [];
   for (const c of mergedClusters) {
-    if (c.pixelCount / validPixels < MIN_CHROMATIC_AREA) continue;
-    if (realChromatics.some((existing) => hueDistance(existing.h, c.h) < 0.08)) continue;
-    realChromatics.push(c);
-    if (realChromatics.length >= 3) break;
+    const area = c.pixelCount / validPixels;
+    const minArea = c.avgGlow >= 0.35 ? 0.014 : 0.024;
+    if (area < minArea) continue;
+    if (candidateChromatics.some((existing) => hueDistance(existing.h, c.h) < 0.08)) continue;
+    candidateChromatics.push(c);
+    if (candidateChromatics.length >= 4) break;
   }
+
+  // If the cover has a strong glowing focal color (e.g. vivid red), keep ultra-dull background
+  // earth tones (e.g. brown walls/skin) in the subtle backdrop instead of muddying the foreground cycle!
+  let dullBackdropCluster: ChromaticCluster | null = null;
+  let realChromatics = candidateChromatics;
+  if (candidateChromatics.length >= 2) {
+    const topGlow = candidateChromatics[0].avgGlow;
+    if (topGlow >= 0.28) {
+      const vividOnes: ChromaticCluster[] = [];
+      for (const c of candidateChromatics) {
+        if (c.avgGlow < 0.08 && c.avgGlow < topGlow * 0.22) {
+          if (!dullBackdropCluster || c.pixelCount > dullBackdropCluster.pixelCount) {
+            dullBackdropCluster = c;
+          }
+        } else {
+          vividOnes.push(c);
+        }
+      }
+      if (vividOnes.length > 0) {
+        realChromatics = vividOnes;
+      }
+    }
+  }
+  realChromatics = realChromatics.slice(0, 3);
 
   // Neutral pure white & brushed metallic silver swatches (0% saturation — NEVER blue or green!)
   const crispWhite: RGB = { r: 0.95, g: 0.95, b: 0.96 };
@@ -224,20 +301,38 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
 
   // Build ordered list of the cover's genuine individual accent colors
   const c0 = realChromatics[0];
-  const colorA = toTrueCoverChromatic(c0.h, c0.s, c0.l);
+  const colorA = toTrueCoverChromatic(c0.h, c0.s, c0.l, c0.avgGlow);
   const hasSignificantWhiteSilver = whiteSilverRatio >= 0.065;
 
-  // Determine backdrop: true jet black if dark cover, else ultra-deep cover tint
+  // Adapt background prominence to how much the dominant cover color naturally "glows":
+  // dull earthy covers (low avgGlow) sit calmer & deeper; glowing reds/golds shine vividly!
+  if (c0.avgGlow < 0.14) {
+    darkStage = Math.max(darkStage, clamp(0.46 - c0.avgGlow * 1.8, 0.22, 0.46));
+  } else if (dullBackdropCluster && dullBackdropCluster.pixelCount / validPixels > 0.35) {
+    // Large dull background with a sharp glowing accent (e.g. brown scene + glowing red focal point):
+    // deepen the stage slightly so the glowing red pops cleanly!
+    darkStage = Math.max(darkStage, 0.44);
+  }
+
+  // Determine backdrop: true jet black if dark cover, deep dull-surface tint if present, else deep cover tint
+  const backdropSource = dullBackdropCluster ?? c0;
   const backdrop: RGB =
     darkStage >= 0.65
       ? jetBlack
-      : hslToRgb(c0.h, clamp(c0.s * 0.7, 0.25, 0.75), 0.045);
+      : hslToRgb(
+          backdropSource.h,
+          clamp(backdropSource.s * 0.65, 0.18, 0.65),
+          dullBackdropCluster ? 0.04 : 0.045
+        );
 
-  // CASE 2: 1 real chromatic color (e.g., Black + Gold + Silver on RAM, or Black + Red on Sick Boi!)
+  // CASE 2: 1 real chromatic color (e.g., Black + Gold + Silver on RAM, Black + Red on Sick Boi, or Brown + Glowing Red)
   if (realChromatics.length === 1) {
     if (hasSignificantWhiteSilver) {
-      // E.g. Random Access Memories (Black + Gold + Silver) or Black + Red + White
-      const warmLuminous = hslToRgb(c0.h, clamp(c0.s * 0.85, 0.45, 0.92), clamp(c0.l * 0.4 + 0.44, 0.56, 0.72));
+      const warmLuminous = hslToRgb(
+        c0.h,
+        clamp(c0.s * 0.85, 0.40, 0.92),
+        clamp(c0.l * 0.4 + 0.44, 0.54, 0.72)
+      );
       return {
         backdrop,
         color1: colorA,
@@ -247,9 +342,17 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
       };
     }
 
-    // Pure Black + Single Bold Color (e.g., Black + Crimson Red)
-    const richDeepAccent = hslToRgb(c0.h, clamp(c0.s * 1.15, 0.65, 0.98), 0.38);
-    const brightAccent = hslToRgb(c0.h, clamp(c0.s * 0.95, 0.60, 0.95), 0.62);
+    const glowFactor = clamp(c0.avgGlow / 0.42, 0, 1);
+    const richDeepAccent = hslToRgb(
+      c0.h,
+      clamp(c0.s * (0.95 + glowFactor * 0.2), 0.22, 0.98),
+      0.26 + glowFactor * 0.13
+    );
+    const brightAccent = hslToRgb(
+      c0.h,
+      clamp(c0.s * 0.92, 0.22, 0.95),
+      0.42 + glowFactor * 0.20
+    );
     return {
       backdrop,
       color1: colorA,
@@ -261,16 +364,17 @@ export function extractPaletteFromRgba(data: Uint8ClampedArray): ThemePalette {
 
   // CASE 3: 2+ genuine chromatic colors (plus optional White/Silver!)
   const c1 = realChromatics[1];
-  const colorB = toTrueCoverChromatic(c1.h, c1.s, c1.l);
+  const colorB = toTrueCoverChromatic(c1.h, c1.s, c1.l, c1.avgGlow);
 
   let colorC: RGB;
   if (realChromatics.length >= 3) {
     const c2 = realChromatics[2];
-    colorC = toTrueCoverChromatic(c2.h, c2.s, c2.l);
+    colorC = toTrueCoverChromatic(c2.h, c2.s, c2.l, c2.avgGlow);
   } else if (hasSignificantWhiteSilver) {
     colorC = metallicSilver;
   } else {
-    colorC = hslToRgb(c0.h, clamp(c0.s * 0.95, 0.55, 0.95), 0.62);
+    const glowFactor = clamp(c0.avgGlow / 0.42, 0, 1);
+    colorC = hslToRgb(c0.h, clamp(c0.s * 0.92, 0.25, 0.95), 0.44 + glowFactor * 0.18);
   }
 
   return {

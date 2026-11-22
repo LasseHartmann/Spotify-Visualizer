@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computePerceptualGlow,
   extractPaletteFromRgba,
   isLightColor,
   paletteFromCustomHex,
@@ -98,6 +99,45 @@ describe('extractPaletteFromRgba', () => {
 
     expect(sampleMoodColor(pal, 0.0, false)).toEqual(pal.color1);
     expect(sampleMoodColor(pal, 1.5, false)).toEqual(pal.color1);
+  });
+
+  it('lets a small glowing red accent dominate over a much larger dull brown background', () => {
+    const brownWithGlowingRed = makeImageFromRegions([
+      { ratio: 0.72, rgb: [112, 82, 58] },      // Large dull brown surface
+      { ratio: 0.22, rgb: [68, 52, 40] },       // Dark brown shadow
+      { ratio: 0.06, rgb: [235, 24, 30] },      // Small eye-catching glowing red accent
+    ]);
+
+    const pal = extractPaletteFromRgba(brownWithGlowingRed);
+    // Glowing red MUST win color1 (vivid high R, low G & B) even at just 6% area!
+    expect(pal.color1.r).toBeGreaterThan(0.82);
+    expect(pal.color1.g).toBeLessThan(0.24);
+    expect(pal.color1.b).toBeLessThan(0.24);
+    // Dull brown stays subtly in the deep backdrop instead of turning foreground muddy brown
+    expect(pal.color2.r).toBeGreaterThan(0.75);
+    expect(pal.color2.g).toBeLessThan(0.35);
+  });
+
+  it('keeps an all-brown cover understated and earthy rather than glowing neon orange', () => {
+    const allBrownCover = makeImageFromRegions([
+      { ratio: 0.70, rgb: [110, 78, 52] },      // Muted brown
+      { ratio: 0.30, rgb: [72, 50, 34] },       // Darker wood brown
+    ]);
+
+    const pal = extractPaletteFromRgba(allBrownCover);
+    // Red > Green > Blue (warm brown), yet restrained luminance & calmer darkStage
+    expect(pal.color1.r).toBeGreaterThan(pal.color1.g);
+    expect(pal.color1.g).toBeGreaterThan(pal.color1.b);
+    expect(pal.color1.r).toBeLessThan(0.62);
+    expect(pal.darkStage).toBeGreaterThan(0.35);
+  });
+
+  it('scores vivid red far higher in perceptual glow than dull brown', () => {
+    const redGlow = computePerceptualGlow(235 / 255, 24 / 255, 30 / 255, 0.997, 0.84, 0.83);
+    const brownGlow = computePerceptualGlow(112 / 255, 82 / 255, 58 / 255, 0.074, 0.32, 0.21);
+    expect(redGlow).toBeGreaterThan(0.65);
+    expect(brownGlow).toBeLessThan(0.03);
+    expect(redGlow / brownGlow).toBeGreaterThan(25);
   });
 });
 
