@@ -26,6 +26,7 @@ import { LoginScreen } from '@/components/LoginScreen';
 import { LyricsOverlay } from '@/components/LyricsOverlay';
 import { ControlHud } from '@/components/ControlHud';
 import { KeepAwakeManager, type KeepAwakeStatus } from '@/platform/keepAwake';
+import { PwaInstallController, type PwaInstallState } from '@/platform/pwaInstall';
 import { isWebPlatform } from '@/platform/webBridge';
 
 const INITIAL_AUTH: AuthState = {
@@ -134,8 +135,10 @@ export function App() {
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState<boolean>(loadSavedKeepAwake);
   const [keepAwakeStatus, setKeepAwakeStatus] = useState<KeepAwakeStatus>('off');
+  const [pwaInstallState, setPwaInstallState] = useState<PwaInstallState>('hidden');
 
   const keepAwakeRef = useRef<KeepAwakeManager | null>(null);
+  const pwaControllerRef = useRef<PwaInstallController | null>(null);
   const audioEngineRef = useRef<AudioEngine | null>(null);
   const latestTrackRef = useRef<TrackInfo | null>(null);
   const pollNowRef = useRef<(() => void) | null>(null);
@@ -233,6 +236,18 @@ export function App() {
       keepAwakeRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWeb]);
+
+  // Web-only PWA install prompt controller (Chrome / Edge / Android / iOS Safari)
+  useEffect(() => {
+    if (!isWeb) return;
+    const controller = new PwaInstallController(setPwaInstallState);
+    pwaControllerRef.current = controller;
+    controller.start();
+    return () => {
+      controller.dispose();
+      pwaControllerRef.current = null;
+    };
   }, [isWeb]);
 
   useEffect(() => {
@@ -557,6 +572,15 @@ export function App() {
     }, durationMs);
   }, []);
 
+  const handleInstallPwa = useCallback(async () => {
+    const outcome = await pwaControllerRef.current?.triggerInstall();
+    if (outcome === 'ios-guide') {
+      flashToast('iPhone / iPad: tap Share → Add to Home Screen', 4200);
+    } else if (outcome === 'accepted') {
+      flashToast('Spotify Visualizer installed!', 2400);
+    }
+  }, [flashToast]);
+
   const handleToggleKeepAwake = useCallback(() => {
     if (!isWeb) return;
     if (keepAwakeEnabled && keepAwakeStatus === 'waiting') {
@@ -785,10 +809,14 @@ export function App() {
         audioEngineRef={audioEngineRef}
       />
 
+      {offsetToast && <div className="offset-toast">{offsetToast}</div>}
+
       {!authLoaded ? null : !auth.isAuthenticated ? (
         <LoginScreen
           auth={auth}
           isFullscreen={isFullscreen}
+          pwaInstallState={pwaInstallState}
+          onInstallPwa={() => void handleInstallPwa()}
           onLogin={(clientId) => void handleLogin(clientId)}
           onToggleFullscreen={() => void handleToggleFullscreen()}
           onClose={handleClose}
@@ -827,11 +855,11 @@ export function App() {
             customColor={customColor}
             showColorMenu={showColorMenu}
             offsetMs={offsetMs}
-            offsetToast={offsetToast}
             isFullscreen={isFullscreen}
             showShortcuts={showShortcuts}
             keepAwakeEnabled={keepAwakeEnabled}
             keepAwakeStatus={keepAwakeStatus}
+            pwaInstallState={pwaInstallState}
             onSelectPreset={selectPreset}
             onCycleLayout={cycleLayout}
             onToggleCover={toggleCover}
@@ -850,6 +878,7 @@ export function App() {
             onNudgeOffset={nudgeOffset}
             onResetOffset={resetOffset}
             onToggleKeepAwake={handleToggleKeepAwake}
+            onInstallPwa={() => void handleInstallPwa()}
             onToggleFullscreen={() => void handleToggleFullscreen()}
             onToggleShortcuts={() => setShowShortcuts((v) => !v)}
             onLogout={() => void handleLogout()}

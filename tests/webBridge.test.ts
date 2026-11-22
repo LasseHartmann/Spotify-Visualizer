@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildSpotifyAuthorizeUrl,
@@ -6,6 +8,7 @@ import {
   parseOAuthCallbackParams,
 } from '../src/platform/webBridge';
 import { buildSilentWavBytes } from '../src/platform/keepAwake';
+import { isIosSafari } from '../src/platform/pwaInstall';
 import {
   hasEnhancedWordTags,
   parseDurationStringSec,
@@ -179,5 +182,39 @@ describe('webBridge helpers', () => {
     // Sample payload is pure unsigned 8-bit silence (128)
     expect(wav[44]).toBe(128);
     expect(wav[wav.byteLength - 1]).toBe(128);
+  });
+
+  it('ships a valid standalone PWA manifest with existing PNG icons and detects iOS Safari', () => {
+    const publicDir = path.resolve(__dirname, '..', 'public');
+    const manifestPath = path.join(publicDir, 'manifest.webmanifest');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
+      name: string;
+      display: string;
+      start_url: string;
+      icons: Array<{ src: string; sizes: string; type: string }>;
+    };
+
+    expect(manifest.name).toBe('Spotify Visualizer');
+    expect(manifest.display).toBe('standalone');
+    expect(manifest.start_url).toBe('/');
+    expect(manifest.icons.length).toBeGreaterThanOrEqual(2);
+    for (const icon of manifest.icons) {
+      expect(icon.type).toBe('image/png');
+      const rel = icon.src.replace(/^\//, '');
+      expect(fs.existsSync(path.join(publicDir, rel))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(publicDir, 'sw.js'))).toBe(true);
+    expect(fs.existsSync(path.join(publicDir, 'icons', 'apple-touch-icon.png'))).toBe(true);
+
+    expect(
+      isIosSafari(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
+      )
+    ).toBe(true);
+    expect(
+      isIosSafari(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+      )
+    ).toBe(false);
   });
 });

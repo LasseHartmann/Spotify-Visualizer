@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -12,11 +13,14 @@ import {
   X,
 } from 'lucide-react';
 import type { AuthState } from '@shared/types';
+import type { PwaInstallState } from '@/platform/pwaInstall';
 import { isWebPlatform } from '@/platform/webBridge';
 
 interface LoginScreenProps {
   auth: AuthState;
   isFullscreen: boolean;
+  pwaInstallState: PwaInstallState;
+  onInstallPwa: () => void;
   onLogin: (clientId: string) => void;
   onToggleFullscreen: () => void;
   onClose: () => void;
@@ -27,6 +31,8 @@ const CLIENT_ID_REGEX = /^[a-f0-9]{32}$/i;
 export function LoginScreen({
   auth,
   isFullscreen,
+  pwaInstallState,
+  onInstallPwa,
   onLogin,
   onToggleFullscreen,
   onClose,
@@ -67,6 +73,16 @@ export function LoginScreen({
     <div className="login-layer">
       <div className="login-window-bar">
         <div className="glass-pill">
+          {isWeb && pwaInstallState !== 'hidden' && (
+            <button
+              className="hud-btn active"
+              onClick={onInstallPwa}
+              title="Install Spotify Visualizer as an app"
+            >
+              <Download size={14} />
+              <span>Install App</span>
+            </button>
+          )}
           <button
             className="hud-btn icon-only"
             onClick={onToggleFullscreen}

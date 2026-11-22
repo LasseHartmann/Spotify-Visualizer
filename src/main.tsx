@@ -7,9 +7,11 @@ import '@fontsource/plus-jakarta-sans/800.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '@/styles/app.css';
 import { installWebBridgeIfNeeded } from '@/platform/webBridge';
+import { registerPwaServiceWorker } from '@/platform/pwaInstall';
 import { App } from '@/App';
 
 installWebBridgeIfNeeded();
+registerPwaServiceWorker();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

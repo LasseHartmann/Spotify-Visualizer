@@ -4,9 +4,16 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; media-src 'self' blob: data:; connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://lrclib.net https://lyricsplus.prjktla.my.id https://*.scdn.co https://*.spotifycdn.com;"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; media-src 'self' blob: data:; worker-src 'self'; manifest-src 'self'; connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://lrclib.net https://lyricsplus.prjktla.my.id https://*.scdn.co https://*.spotifycdn.com;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#06080f" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Visualizer" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
     <link
       rel="icon"
       type="image/svg+xml"

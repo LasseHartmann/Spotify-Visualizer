@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Disc3,
+  Download,
   EyeOff,
   HelpCircle,
   Lock,
@@ -36,6 +37,7 @@ import type {
 } from '@shared/types';
 import type { AudioCaptureStatus } from '@/audio/audioEngine';
 import type { KeepAwakeStatus } from '@/platform/keepAwake';
+import type { PwaInstallState } from '@/platform/pwaInstall';
 import { SHADER_PRESETS } from '@/shaders/presets';
 
 interface ColorSwatch {
@@ -75,11 +77,11 @@ interface ControlHudProps {
   customColor: string;
   showColorMenu: boolean;
   offsetMs: number;
-  offsetToast: string | null;
   isFullscreen: boolean;
   showShortcuts: boolean;
   keepAwakeEnabled: boolean;
   keepAwakeStatus: KeepAwakeStatus;
+  pwaInstallState: PwaInstallState;
   onSelectPreset: (preset: ShaderPresetId) => void;
   onCycleLayout: () => void;
   onToggleCover: () => void;
@@ -95,6 +97,7 @@ interface ControlHudProps {
   onNudgeOffset: (deltaMs: number) => void;
   onResetOffset: () => void;
   onToggleKeepAwake: () => void;
+  onInstallPwa: () => void;
   onToggleFullscreen: () => void;
   onToggleShortcuts: () => void;
   onLogout: () => void;
@@ -128,11 +131,11 @@ export function ControlHud({
   customColor,
   showColorMenu,
   offsetMs,
-  offsetToast,
   isFullscreen,
   showShortcuts,
   keepAwakeEnabled,
   keepAwakeStatus,
+  pwaInstallState,
   onSelectPreset,
   onCycleLayout,
   onToggleCover,
@@ -148,6 +151,7 @@ export function ControlHud({
   onNudgeOffset,
   onResetOffset,
   onToggleKeepAwake,
+  onInstallPwa,
   onToggleFullscreen,
   onToggleShortcuts,
   onLogout,
@@ -266,8 +270,6 @@ export function ControlHud({
 
   return (
     <>
-      {offsetToast && <div className="offset-toast">{offsetToast}</div>}
-
       <div className="hud-layer">
         {/* TOP BAR */}
         <div className={`hud-top ${visible ? 'is-visible' : 'is-hidden'}`}>
@@ -397,6 +399,17 @@ export function ControlHud({
                         ? 'Awake'
                         : 'Tap Awake'}
                   </span>
+                </button>
+              )}
+
+              {isWeb && pwaInstallState !== 'hidden' && (
+                <button
+                  className="hud-btn"
+                  onClick={onInstallPwa}
+                  title="Install Spotify Visualizer as a standalone app"
+                >
+                  <Download size={14} />
+                  <span>Install</span>
                 </button>
               )}
 

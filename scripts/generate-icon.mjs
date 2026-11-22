@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const buildDir = path.resolve(__dirname, '..', 'build');
+const pwaIconsDir = path.resolve(__dirname, '..', 'public', 'icons');
 
 function crc32(buf) {
   let c = 0xffffffff;
@@ -70,17 +71,18 @@ function sdRoundedBox(px, py, bx, by, r) {
   return out + inside - r;
 }
 
-function renderIcon(size) {
+function renderIcon(size, maskable = false) {
   const rgba = Buffer.alloc(size * size * 4);
   const aa = 2.2 / size;
+  const barScale = maskable ? 0.78 : 1.0;
 
   // 5 audio wave bars: [xCenter, halfHeight]
   const bars = [
-    [-0.44, 0.16],
-    [-0.22, 0.34],
-    [0.0, 0.46],
-    [0.22, 0.28],
-    [0.44, 0.19],
+    [-0.44 * barScale, 0.16 * barScale],
+    [-0.22 * barScale, 0.34 * barScale],
+    [0.0, 0.46 * barScale],
+    [0.22 * barScale, 0.28 * barScale],
+    [0.44 * barScale, 0.19 * barScale],
   ];
 
   for (let y = 0; y < size; y++) {
@@ -88,9 +90,9 @@ function renderIcon(size) {
       const u = ((x + 0.5) / size) * 2 - 1;
       const v = ((y + 0.5) / size) * 2 - 1;
 
-      // Squircle container
+      // Squircle container (or full-bleed opaque canvas for Android maskable / iOS apple-touch-icon)
       const boxDist = sdRoundedBox(u, v, 0.9, 0.9, 0.24);
-      const mask = 1 - smoothstep(-aa, aa, boxDist);
+      const mask = maskable ? 1.0 : 1 - smoothstep(-aa, aa, boxDist);
       if (mask <= 0.001) continue;
 
       // Deep dark obsidian background with tasteful aurora glow
@@ -109,20 +111,25 @@ function renderIcon(size) {
 
       // Crisp thin luminous ring halo
       const rad = Math.hypot(u, v);
-      const ring = Math.exp(-((rad - 0.68) ** 2) * 260) * 0.34;
+      const ringRadius = maskable ? 0.58 : 0.68;
+      const ring = Math.exp(-((rad - ringRadius) ** 2) * 260) * 0.34;
       r += ring * 45;
       g += ring * 215;
       b += ring * 155;
 
-      // Subtle glass rim highlight
-      const rim = smoothstep(-0.04, -0.005, boxDist) * (1 - smoothstep(-0.005, 0.008, boxDist));
-      r += rim * 58;
-      g += rim * 96;
-      b += rim * 108;
+      // Subtle glass rim highlight on squircle icons
+      if (!maskable) {
+        const rim =
+          smoothstep(-0.04, -0.005, boxDist) * (1 - smoothstep(-0.005, 0.008, boxDist));
+        r += rim * 58;
+        g += rim * 96;
+        b += rim * 108;
+      }
 
       // Glowing audio visualizer bars
+      const barRadius = 0.064 * barScale;
       for (const [bx, bh] of bars) {
-        const d = sdRoundedBox(u - bx, v, 0.064, bh, 0.064);
+        const d = sdRoundedBox(u - bx, v, barRadius, bh, barRadius);
         // Tight emerald bloom around each bar
         const glow = Math.exp(-Math.max(d, 0) * 18) * 0.14;
         r += glow * 30;
@@ -181,9 +188,18 @@ function encodeIco(pngEntries) {
 }
 
 fs.mkdirSync(buildDir, { recursive: true });
+fs.mkdirSync(pwaIconsDir, { recursive: true });
+
 const sizes = [256, 128, 64, 48, 32, 16];
-const entries = sizes.map((size) => ({ size, png: renderIcon(size) }));
+const entries = sizes.map((size) => ({ size, png: renderIcon(size, false) }));
 
 fs.writeFileSync(path.join(buildDir, 'icon.png'), entries[0].png);
 fs.writeFileSync(path.join(buildDir, 'icon.ico'), encodeIco(entries));
-console.log('[generate-icon] Wrote build/icon.png and build/icon.ico');
+
+// PWA icons (served from public/icons/ by Vite & Vercel)
+fs.writeFileSync(path.join(pwaIconsDir, 'icon-192.png'), renderIcon(192, false));
+fs.writeFileSync(path.join(pwaIconsDir, 'icon-512.png'), renderIcon(512, false));
+fs.writeFileSync(path.join(pwaIconsDir, 'icon-maskable-512.png'), renderIcon(512, true));
+fs.writeFileSync(path.join(pwaIconsDir, 'apple-touch-icon.png'), renderIcon(180, true));
+
+console.log('[generate-icon] Wrote build/icon.{png,ico} and public/icons/ PWA icons');
