@@ -156,22 +156,22 @@ export class AudioDsp {
       rawVocal * 0.18 +
       rawTreble * 0.12;
 
-    const hasSignal = rms > 0.0012 || rawComposite > 0.012;
+    const hasSignal = rms > 0.0006 || rawComposite > 0.006;
 
     // 2. Adaptive Auto-Gain Control (AGC)
     if (hasSignal) {
       const peakSample = Math.max(rawBass, rawSub * 0.95, rawVocal * 0.9, rawComposite * 1.15);
-      // Fast rise, ~1.5s smooth decay so quiet tracks and low Windows headphone volume lock in rapidly
+      // Fast rise, ~1.5s smooth decay so quiet tracks and low Windows laptop/headphone volume lock in rapidly
       this.agcBandPeak = expSmooth(
         this.agcBandPeak,
-        Math.max(0.045, peakSample),
+        Math.max(0.025, peakSample),
         dt,
         9.0,
         0.72
       );
       this.agcWavePeak = expSmooth(
         this.agcWavePeak,
-        Math.max(0.015, wavePeak),
+        Math.max(0.008, wavePeak),
         dt,
         10.0,
         0.75
@@ -182,7 +182,7 @@ export class AudioDsp {
       this.agcWavePeak = expSmooth(this.agcWavePeak, 0.08, dt, 0.6, 0.6);
     }
 
-    const gain = clamp(0.92 / Math.max(0.045, this.agcBandPeak), 0.75, 11.0);
+    const gain = clamp(0.92 / Math.max(0.025, this.agcBandPeak), 0.75, 16.0);
     const sens = 1.05;
 
     const normSub = hasSignal ? clamp(Math.pow(rawSub * gain, 1.12) * sens, 0, 1) : 0;
@@ -358,7 +358,7 @@ export class AudioDsp {
 
     // 9. Pack AGC-normalized log-mapped FFT (row 0) & waveform (row 1) into 256x2 texture
     const maxBin = Math.min(freqBins.length - 1, Math.floor(14000 / binHz));
-    const waveGain = clamp(0.88 / Math.max(0.015, this.agcWavePeak), 1.0, 22.0);
+    const waveGain = clamp(0.88 / Math.max(0.008, this.agcWavePeak), 1.0, 28.0);
     for (let x = 0; x < AUDIO_TEX_WIDTH; x++) {
       const u = x / (AUDIO_TEX_WIDTH - 1);
       const logIdx = clamp(Math.floor(Math.pow(Math.max(2, maxBin), u)), 1, maxBin);

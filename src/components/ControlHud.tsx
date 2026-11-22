@@ -35,7 +35,7 @@ import type {
   ShaderPresetId,
   SweepMode,
 } from '@shared/types';
-import type { AudioCaptureStatus } from '@/audio/audioEngine';
+import type { AudioCaptureStatus, AudioDiagnosticInfo } from '@/audio/audioEngine';
 import type { KeepAwakeStatus } from '@/platform/keepAwake';
 import type { PwaInstallState } from '@/platform/pwaInstall';
 import { SHADER_PRESETS } from '@/shaders/presets';
@@ -72,6 +72,7 @@ interface ControlHudProps {
   hasWordSync: boolean;
   audioEnabled: boolean;
   audioStatus: AudioCaptureStatus;
+  audioDiag: AudioDiagnosticInfo;
   showAudioMenu: boolean;
   colorMode: ColorMode;
   customColor: string;
@@ -126,6 +127,7 @@ export function ControlHud({
   hasWordSync,
   audioEnabled,
   audioStatus,
+  audioDiag,
   showAudioMenu,
   colorMode,
   customColor,
@@ -243,6 +245,32 @@ export function ControlHud({
   const isLiveRunning = audioEnabled && audioStatus === 'active';
   const formattedOffset = `${offsetMs >= 0 ? '+' : ''}${(offsetMs / 1000).toFixed(1)}s`;
 
+  const audioButtonLabel = isLiveRunning
+    ? 'Live Audio'
+    : isWeb
+      ? 'Ambient'
+      : !audioEnabled
+        ? 'Audio Off'
+        : audioStatus === 'starting'
+          ? 'Connecting…'
+          : audioStatus === 'error'
+            ? 'Audio Error'
+            : 'Ambient';
+
+  const audioButtonTitle = isWeb
+    ? 'Choose browser live audio source (A)'
+    : !audioEnabled
+      ? 'Live Windows audio paused — click to enable (A)'
+      : audioStatus === 'error'
+        ? `Windows audio capture unavailable${audioDiag.errorMessage ? `: ${audioDiag.errorMessage}` : ''} — click to retry (A)`
+        : audioStatus === 'starting'
+          ? 'Connecting to Windows audio output…'
+          : audioDiag.hasSignal
+            ? `Live Audio · ${audioDiag.deviceName ?? 'Windows Audio'} — click to pause (A)`
+            : playback?.isPlaying
+              ? `Listening on ${audioDiag.deviceName ?? 'Windows Audio'} — no laptop sound detected yet (check that Spotify is playing on this PC, or turn off Windows Audio Enhancements). Click to toggle (A)`
+              : `Live Audio · ${audioDiag.deviceName ?? 'Windows Audio'} (silent) — click to pause (A)`;
+
   // Hide bottom track card peek when large album cover showcase is already showing on stage
   const showTrackCard = Boolean(track) && (visible || (trackPeekVisible && !showCover));
 
@@ -277,14 +305,10 @@ export function ControlHud({
             <div className="glass-pill">
               <div className="audio-picker-wrap">
                 <button
-                  className={`hud-btn ${isLiveRunning || showAudioMenu || (!isWeb && audioEnabled) ? 'active' : ''}`}
+                  className={`hud-btn ${isLiveRunning || showAudioMenu ? 'active' : ''}`}
                   onClick={onToggleAudio}
                   data-audio-trigger="true"
-                  title={
-                    isWeb
-                      ? 'Choose browser live audio source (A)'
-                      : 'Toggle live Windows audio reactivity (A)'
-                  }
+                  title={audioButtonTitle}
                 >
                   {isLiveRunning ? (
                     <span className="mini-eq" aria-hidden="true">
@@ -297,15 +321,7 @@ export function ControlHud({
                   ) : (
                     <VolumeX size={14} />
                   )}
-                  <span>
-                    {isLiveRunning
-                      ? 'Live Audio'
-                      : isWeb
-                        ? 'Ambient'
-                        : !audioEnabled
-                          ? 'Audio Off'
-                          : 'Ambient'}
-                  </span>
+                  <span>{audioButtonLabel}</span>
                 </button>
               </div>
             </div>

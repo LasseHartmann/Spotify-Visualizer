@@ -94,6 +94,13 @@ export interface NativeAudioPacket {
   timeBins: Uint8Array;
 }
 
+export interface NativeAudioStatus {
+  state: 'starting' | 'active' | 'error' | 'silent_apo' | 'stopped';
+  deviceName?: string;
+  backend?: 'wasapi' | 'chromium';
+  message?: string;
+}
+
 export interface VisualizerApi {
   platform?: 'electron' | 'web';
   auth: {
@@ -116,6 +123,7 @@ export interface VisualizerApi {
     startTap: (deviceId: string) => Promise<boolean>;
     stopTap: () => Promise<void>;
     onFrame: (callback: (packet: NativeAudioPacket) => void) => () => void;
+    onStatus?: (callback: (status: NativeAudioStatus) => void) => () => void;
     onStopped?: (callback: () => void) => () => void;
   };
   window: {

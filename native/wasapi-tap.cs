@@ -70,6 +70,15 @@ namespace WasapiTap
         [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant pv);
     }
 
+    [ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioMeterInformation
+    {
+        [PreserveSig] int GetPeakValue(out float pfPeak);
+        [PreserveSig] int GetMeteringChannelCount(out uint pnChannelCount);
+        [PreserveSig] int GetChannelsPeakValues(uint u32ChannelCount, [Out, MarshalAs(UnmanagedType.LPArray)] float[] afPeakValues);
+        [PreserveSig] int QueryHardwareSupport(out uint pdwHardwareSupportMask);
+    }
+
     [ComImport, Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IAudioClient
     {
@@ -99,10 +108,13 @@ namespace WasapiTap
     {
         const int eRender = 0;
         const int eConsole = 0;
+        const int eMultimedia = 1;
         const uint DEVICE_STATE_ACTIVE = 0x00000001;
         const uint CLSCTX_ALL = 0x17;
         const int AUDCLNT_SHAREMODE_SHARED = 0;
         const uint AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000;
+        const uint AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM = 0x80000000;
+        const uint AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY = 0x08000000;
         const uint AUDCLNT_BUFFERFLAGS_SILENT = 0x00000002;
         const ushort WAVE_FORMAT_PCM = 1;
         const ushort WAVE_FORMAT_IEEE_FLOAT = 3;
@@ -112,6 +124,7 @@ namespace WasapiTap
 
         static Guid IID_IAudioClient = new Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2");
         static Guid IID_IAudioCaptureClient = new Guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317");
+        static Guid IID_IAudioMeterInformation = new Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064");
         static Guid KSDATAFORMAT_SUBTYPE_IEEE_FLOAT = new Guid("00000003-0000-0010-8000-00AA00389B71");
         static Guid KSDATAFORMAT_SUBTYPE_PCM = new Guid("00000001-0000-0010-8000-00AA00389B71");
         static PropertyKey PKEY_Device_FriendlyName = new PropertyKey
@@ -131,6 +144,20 @@ namespace WasapiTap
         const byte VK_MEDIA_PLAY_PAUSE = 0xB3;
         const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
         const uint KEYEVENTF_KEYUP = 0x0002;
+
+        static Stream stderrStream = null;
+
+        static void EmitStatus(string line)
+        {
+            try
+            {
+                if (stderrStream == null) stderrStream = Console.OpenStandardError();
+                byte[] bytes = Encoding.UTF8.GetBytes(line + "\n");
+                stderrStream.Write(bytes, 0, bytes.Length);
+                stderrStream.Flush();
+            }
+            catch { }
+        }
 
         static int SendMediaKey(string action)
         {
@@ -160,12 +187,442 @@ namespace WasapiTap
                         : "Audio Output";
                     PropVariantClear(ref pv);
                     Marshal.ReleaseComObject(store);
-                    return name ?? "Audio Output";
+                    return string.IsNullOrEmpty(name) ? "Audio Output" : name;
                 }
                 Marshal.ReleaseComObject(store);
             }
             catch { }
             return "Audio Output";
+        }
+
+        static float GetEndpointPeak(IMMDevice device)
+        {
+            object meterObj = null;
+            try
+            {
+                Guid iid = IID_IAudioMeterInformation;
+                int hr = device.Activate(ref iid, CLSCTX_ALL, IntPtr.Zero, out meterObj);
+                if (hr == 0 && meterObj != null)
+                {
+                    var meter = (IAudioMeterInformation)meterObj;
+                    float peak;
+                    if (meter.GetPeakValue(out peak) == 0 && !float.IsNaN(peak) && !float.IsInfinity(peak))
+                    {
+                        return Math.Max(0f, peak);
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                if (meterObj != null)
+                {
+                    try { Marshal.ReleaseComObject(meterObj); } catch { }
+                }
+            }
+            return 0f;
+        }
+
+        static string GetDefaultDeviceId(IMMDeviceEnumerator enumerator, int role)
+        {
+            IMMDevice dev = null;
+            try
+            {
+                if (enumerator.GetDefaultAudioEndpoint(eRender, role, out dev) == 0 && dev != null)
+                {
+                    string id;
+                    if (dev.GetId(out id) == 0) return id ?? "";
+                }
+            }
+            catch { }
+            finally
+            {
+                if (dev != null)
+                {
+                    try { Marshal.ReleaseComObject(dev); } catch { }
+                }
+            }
+            return "";
+        }
+
+        static float GetDevicePeakById(IMMDeviceEnumerator enumerator, string deviceId)
+        {
+            if (string.IsNullOrEmpty(deviceId)) return 0f;
+            IMMDevice dev = null;
+            try
+            {
+                if (enumerator.GetDevice(deviceId, out dev) == 0 && dev != null)
+                {
+                    return GetEndpointPeak(dev);
+                }
+            }
+            catch { }
+            finally
+            {
+                if (dev != null)
+                {
+                    try { Marshal.ReleaseComObject(dev); } catch { }
+                }
+            }
+            return 0f;
+        }
+
+        static void FindLoudestActiveDevice(
+            IMMDeviceEnumerator enumerator,
+            out string bestId,
+            out string bestName,
+            out float bestPeak
+        )
+        {
+            bestId = "";
+            bestName = "";
+            bestPeak = 0f;
+
+            IMMDeviceCollection col = null;
+            try
+            {
+                if (enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, out col) != 0 || col == null)
+                {
+                    return;
+                }
+                uint count;
+                col.GetCount(out count);
+                for (uint i = 0; i < count; i++)
+                {
+                    IMMDevice dev = null;
+                    try
+                    {
+                        if (col.Item(i, out dev) != 0 || dev == null) continue;
+                        float peak = GetEndpointPeak(dev);
+                        if (peak > bestPeak)
+                        {
+                            string id;
+                            dev.GetId(out id);
+                            bestPeak = peak;
+                            bestId = id ?? "";
+                            bestName = GetDeviceName(dev);
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        if (dev != null)
+                        {
+                            try { Marshal.ReleaseComObject(dev); } catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                if (col != null)
+                {
+                    try { Marshal.ReleaseComObject(col); } catch { }
+                }
+            }
+        }
+
+        static List<string> GetCandidateDeviceIds(
+            IMMDeviceEnumerator enumerator,
+            string requestedDeviceId,
+            string preferredActiveId
+        )
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            Action<string> add = (id) =>
+            {
+                if (!string.IsNullOrEmpty(id) && seen.Add(id))
+                {
+                    result.Add(id);
+                }
+            };
+
+            bool isAuto = string.IsNullOrEmpty(requestedDeviceId) || requestedDeviceId == "default";
+            if (!isAuto)
+            {
+                add(requestedDeviceId);
+            }
+            else
+            {
+                add(preferredActiveId);
+
+                // If another active output already has live sound (e.g. Bluetooth headphones, HDMI, Volume Mixer routing), try it first
+                string loudestId, loudestName;
+                float loudestPeak;
+                FindLoudestActiveDevice(enumerator, out loudestId, out loudestName, out loudestPeak);
+                if (loudestPeak > 0.0008f)
+                {
+                    add(loudestId);
+                }
+            }
+
+            // Prefer eMultimedia (music apps like Spotify) before eConsole
+            add(GetDefaultDeviceId(enumerator, eMultimedia));
+            add(GetDefaultDeviceId(enumerator, eConsole));
+
+            // Add all remaining active render devices as fallback (e.g. if default is in exclusive mode)
+            IMMDeviceCollection col = null;
+            try
+            {
+                if (enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, out col) == 0 && col != null)
+                {
+                    uint count;
+                    col.GetCount(out count);
+                    for (uint i = 0; i < count; i++)
+                    {
+                        IMMDevice dev = null;
+                        try
+                        {
+                            if (col.Item(i, out dev) != 0 || dev == null) continue;
+                            string id;
+                            if (dev.GetId(out id) == 0) add(id);
+                        }
+                        catch { }
+                        finally
+                        {
+                            if (dev != null)
+                            {
+                                try { Marshal.ReleaseComObject(dev); } catch { }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                if (col != null)
+                {
+                    try { Marshal.ReleaseComObject(col); } catch { }
+                }
+            }
+
+            return result;
+        }
+
+        static bool ParseWaveFormat(IntPtr formatPtr, out WaveFormatEx fmt, out bool isFloat, out bool isPcm)
+        {
+            fmt = (WaveFormatEx)Marshal.PtrToStructure(formatPtr, typeof(WaveFormatEx));
+            isFloat = fmt.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
+            isPcm = fmt.wFormatTag == WAVE_FORMAT_PCM;
+
+            if (fmt.wFormatTag == WAVE_FORMAT_EXTENSIBLE && fmt.cbSize >= 22)
+            {
+                var subFmtBytes = new byte[16];
+                Marshal.Copy(IntPtr.Add(formatPtr, 24), subFmtBytes, 0, 16);
+                var subFmt = new Guid(subFmtBytes);
+                isFloat = subFmt == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+                isPcm = subFmt == KSDATAFORMAT_SUBTYPE_PCM;
+            }
+
+            if (isFloat)
+            {
+                return fmt.wBitsPerSample == 32 || fmt.wBitsPerSample == 64;
+            }
+            if (isPcm)
+            {
+                return fmt.wBitsPerSample == 8 || fmt.wBitsPerSample == 16 || fmt.wBitsPerSample == 24 || fmt.wBitsPerSample == 32;
+            }
+            return false;
+        }
+
+        static IntPtr AllocStereoFloatFormat(uint sampleRate)
+        {
+            var wfx = new WaveFormatEx
+            {
+                wFormatTag = WAVE_FORMAT_IEEE_FLOAT,
+                nChannels = 2,
+                nSamplesPerSec = sampleRate > 0 ? sampleRate : 48000u,
+                wBitsPerSample = 32,
+                nBlockAlign = 8,
+                nAvgBytesPerSec = (sampleRate > 0 ? sampleRate : 48000u) * 8u,
+                cbSize = 0
+            };
+            IntPtr ptr = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WaveFormatEx)));
+            Marshal.StructureToPtr(wfx, ptr, false);
+            return ptr;
+        }
+
+        static bool TrySingleInit(
+            IMMDevice device,
+            uint streamFlags,
+            long bufferDuration,
+            IntPtr formatPtr,
+            out IAudioClient audioClient,
+            out int hrOut
+        )
+        {
+            audioClient = null;
+            object clientObj = null;
+            Guid iid = IID_IAudioClient;
+            hrOut = device.Activate(ref iid, CLSCTX_ALL, IntPtr.Zero, out clientObj);
+            if (hrOut != 0 || clientObj == null)
+            {
+                return false;
+            }
+
+            var client = (IAudioClient)clientObj;
+            hrOut = client.Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                streamFlags,
+                bufferDuration,
+                0,
+                formatPtr,
+                IntPtr.Zero
+            );
+
+            if (hrOut == 0)
+            {
+                audioClient = client;
+                return true;
+            }
+
+            try { Marshal.ReleaseComObject(client); } catch { }
+            return false;
+        }
+
+        static bool TryInitializeLoopback(
+            IMMDevice device,
+            bool forceAutoconvert,
+            out IAudioClient audioClient,
+            out WaveFormatEx activeFmt,
+            out bool isFloat,
+            out bool isPcm,
+            out string initMode,
+            out string lastError
+        )
+        {
+            audioClient = null;
+            activeFmt = new WaveFormatEx();
+            isFloat = false;
+            isPcm = false;
+            initMode = "";
+            lastError = "";
+
+            IntPtr mixFormatPtr = IntPtr.Zero;
+            IntPtr stereoDesiredPtr = IntPtr.Zero;
+            IntPtr closestMatchPtr = IntPtr.Zero;
+            IntPtr stereo48kPtr = IntPtr.Zero;
+            IAudioClient probeClient = null;
+
+            try
+            {
+                object probeObj;
+                Guid iid = IID_IAudioClient;
+                int hr = device.Activate(ref iid, CLSCTX_ALL, IntPtr.Zero, out probeObj);
+                if (hr != 0 || probeObj == null)
+                {
+                    lastError = "Activate IAudioClient failed (0x" + hr.ToString("X8") + ")";
+                    return false;
+                }
+                probeClient = (IAudioClient)probeObj;
+
+                uint preferredRate = 48000;
+                bool mixSupported = false;
+                WaveFormatEx mixFmt = new WaveFormatEx();
+                bool mixIsFloat = false;
+                bool mixIsPcm = false;
+
+                hr = probeClient.GetMixFormat(out mixFormatPtr);
+                if (hr == 0 && mixFormatPtr != IntPtr.Zero)
+                {
+                    mixSupported = ParseWaveFormat(mixFormatPtr, out mixFmt, out mixIsFloat, out mixIsPcm);
+                    if (mixFmt.nSamplesPerSec >= 8000 && mixFmt.nSamplesPerSec <= 384000)
+                    {
+                        preferredRate = mixFmt.nSamplesPerSec;
+                    }
+                }
+
+                if (!forceAutoconvert)
+                {
+                    // Stage 1: Mix format with auto-aligned default buffer (0) — fixes Intel SST & Realtek alignment errors
+                    if (mixSupported && mixFormatPtr != IntPtr.Zero)
+                    {
+                        int hr1;
+                        if (TrySingleInit(device, AUDCLNT_STREAMFLAGS_LOOPBACK, 0, mixFormatPtr, out audioClient, out hr1))
+                        {
+                            activeFmt = mixFmt;
+                            isFloat = mixIsFloat;
+                            isPcm = mixIsPcm;
+                            initMode = "mix-auto";
+                            return true;
+                        }
+                        lastError = "Initialize(mix-auto) 0x" + hr1.ToString("X8");
+
+                        // Stage 2: Mix format with explicit 100ms buffer
+                        int hr2;
+                        if (TrySingleInit(device, AUDCLNT_STREAMFLAGS_LOOPBACK, 1000000, mixFormatPtr, out audioClient, out hr2))
+                        {
+                            activeFmt = mixFmt;
+                            isFloat = mixIsFloat;
+                            isPcm = mixIsPcm;
+                            initMode = "mix-100ms";
+                            return true;
+                        }
+                        lastError = "Initialize(mix-100ms) 0x" + hr2.ToString("X8");
+                    }
+
+                    // Stage 3: Query driver's closest supported stereo float format
+                    stereoDesiredPtr = AllocStereoFloatFormat(preferredRate);
+                    int hrSup = probeClient.IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, stereoDesiredPtr, out closestMatchPtr);
+                    IntPtr stage3Ptr = IntPtr.Zero;
+                    if (hrSup == 0)
+                    {
+                        stage3Ptr = stereoDesiredPtr;
+                    }
+                    else if (hrSup == 1 && closestMatchPtr != IntPtr.Zero)
+                    {
+                        stage3Ptr = closestMatchPtr;
+                    }
+
+                    if (stage3Ptr != IntPtr.Zero)
+                    {
+                        WaveFormatEx s3Fmt;
+                        bool s3Float, s3Pcm;
+                        if (ParseWaveFormat(stage3Ptr, out s3Fmt, out s3Float, out s3Pcm))
+                        {
+                            int hr3;
+                            if (TrySingleInit(device, AUDCLNT_STREAMFLAGS_LOOPBACK, 0, stage3Ptr, out audioClient, out hr3))
+                            {
+                                activeFmt = s3Fmt;
+                                isFloat = s3Float;
+                                isPcm = s3Pcm;
+                                initMode = "closest-match";
+                                return true;
+                            }
+                            lastError = "Initialize(closest-match) 0x" + hr3.ToString("X8");
+                        }
+                    }
+                }
+
+                // Stage 4: Force WASAPI built-in resampler/converter to clean 48kHz stereo 32-bit float (bypasses exotic/spatial formats)
+                stereo48kPtr = AllocStereoFloatFormat(48000);
+                uint autoConvFlags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+                int hr4;
+                if (TrySingleInit(device, autoConvFlags, 0, stereo48kPtr, out audioClient, out hr4))
+                {
+                    ParseWaveFormat(stereo48kPtr, out activeFmt, out isFloat, out isPcm);
+                    initMode = "autoconvert-48k";
+                    return true;
+                }
+                lastError = "Initialize(autoconvert) 0x" + hr4.ToString("X8");
+
+                return false;
+            }
+            finally
+            {
+                if (probeClient != null)
+                {
+                    try { Marshal.ReleaseComObject(probeClient); } catch { }
+                }
+                if (mixFormatPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(mixFormatPtr);
+                if (closestMatchPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(closestMatchPtr);
+                if (stereoDesiredPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(stereoDesiredPtr);
+                if (stereo48kPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(stereo48kPtr);
+            }
         }
 
         static string EscapeJson(string s)
@@ -193,12 +650,10 @@ namespace WasapiTap
         static int ListDevices()
         {
             var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
-            string defaultId = "";
-            IMMDevice defDev;
-            if (enumerator.GetDefaultAudioEndpoint(eRender, eConsole, out defDev) == 0 && defDev != null)
+            string defaultId = GetDefaultDeviceId(enumerator, eMultimedia);
+            if (string.IsNullOrEmpty(defaultId))
             {
-                defDev.GetId(out defaultId);
-                Marshal.ReleaseComObject(defDev);
+                defaultId = GetDefaultDeviceId(enumerator, eConsole);
             }
 
             IMMDeviceCollection col;
@@ -213,6 +668,7 @@ namespace WasapiTap
             col.GetCount(out count);
             var sb = new StringBuilder();
             sb.Append('[');
+            bool first = true;
             for (uint i = 0; i < count; i++)
             {
                 IMMDevice dev;
@@ -221,7 +677,8 @@ namespace WasapiTap
                 dev.GetId(out id);
                 string name = GetDeviceName(dev);
                 bool isDefault = string.Equals(id, defaultId, StringComparison.OrdinalIgnoreCase);
-                if (i > 0) sb.Append(',');
+                if (!first) sb.Append(',');
+                first = false;
                 sb.Append("{\"id\":\"").Append(EscapeJson(id))
                   .Append("\",\"name\":\"").Append(EscapeJson(name))
                   .Append("\",\"isDefault\":").Append(isDefault ? "true" : "false")
@@ -234,6 +691,51 @@ namespace WasapiTap
             Marshal.ReleaseComObject(col);
             Marshal.ReleaseComObject(enumerator);
             return 0;
+        }
+
+        static void PrintDiagEndpoints(IMMDeviceEnumerator enumerator)
+        {
+            string mmId = GetDefaultDeviceId(enumerator, eMultimedia);
+            string conId = GetDefaultDeviceId(enumerator, eConsole);
+            IMMDeviceCollection col = null;
+            try
+            {
+                if (enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, out col) != 0 || col == null)
+                {
+                    Console.WriteLine("DIAG_ENDPOINTS count=0");
+                    return;
+                }
+                uint count;
+                col.GetCount(out count);
+                Console.WriteLine("DIAG_ENDPOINTS count=" + count);
+                for (uint i = 0; i < count; i++)
+                {
+                    IMMDevice dev = null;
+                    try
+                    {
+                        if (col.Item(i, out dev) != 0 || dev == null) continue;
+                        string id;
+                        dev.GetId(out id);
+                        string name = GetDeviceName(dev);
+                        float peak = GetEndpointPeak(dev);
+                        bool isMm = string.Equals(id, mmId, StringComparison.OrdinalIgnoreCase);
+                        bool isCon = string.Equals(id, conId, StringComparison.OrdinalIgnoreCase);
+                        Console.WriteLine(
+                            "  [" + i + "] \"" + name + "\" mm=" + isMm +
+                            " console=" + isCon +
+                            " meterPeak=" + peak.ToString("F4")
+                        );
+                    }
+                    finally
+                    {
+                        if (dev != null) Marshal.ReleaseComObject(dev);
+                    }
+                }
+            }
+            finally
+            {
+                if (col != null) Marshal.ReleaseComObject(col);
+            }
         }
 
         static double[] BuildHannWindow(int n)
@@ -294,6 +796,7 @@ namespace WasapiTap
             }
         }
 
+        [MTAThread]
         static int Main(string[] args)
         {
             string requestedDeviceId = "default";
@@ -318,6 +821,12 @@ namespace WasapiTap
                     diagMode = true;
                 }
             }
+
+            try
+            {
+                Console.Error.Write("");
+            }
+            catch { }
 
             // Watch stdin EOF so this helper exits cleanly if the Electron parent dies
             if (!diagMode)
@@ -353,78 +862,117 @@ namespace WasapiTap
             packet[2] = (byte)'A';
             packet[3] = (byte)'1';
 
+            bool isAutoMode = string.IsNullOrEmpty(requestedDeviceId) || requestedDeviceId == "default";
+            string pinnedActiveId = "";
+            string forceAutoconvertDeviceId = "";
+            string lastReportedError = "";
+
+            if (diagMode)
+            {
+                Console.OutputEncoding = Encoding.UTF8;
+                PrintDiagEndpoints(enumerator);
+            }
+
             while (true)
             {
                 IMMDevice device = null;
                 IAudioClient audioClient = null;
                 IAudioCaptureClient captureClient = null;
-                IntPtr mixFormatPtr = IntPtr.Zero;
 
                 try
                 {
-                    int hr;
-                    if (string.IsNullOrEmpty(requestedDeviceId) || requestedDeviceId == "default")
+                    var candidates = GetCandidateDeviceIds(enumerator, requestedDeviceId, pinnedActiveId);
+                    if (candidates.Count == 0)
                     {
-                        hr = enumerator.GetDefaultAudioEndpoint(eRender, eConsole, out device);
-                    }
-                    else
-                    {
-                        hr = enumerator.GetDevice(requestedDeviceId, out device);
-                        if (hr != 0 || device == null)
+                        string msg = "No active Windows audio playback devices found";
+                        if (msg != lastReportedError)
                         {
-                            hr = enumerator.GetDefaultAudioEndpoint(eRender, eConsole, out device);
+                            EmitStatus("WASAPI_ERR:" + msg);
+                            lastReportedError = msg;
                         }
-                    }
-
-                    if (hr != 0 || device == null)
-                    {
                         if (diagMode)
                         {
-                            Console.Error.WriteLine("GetDefaultAudioEndpoint failed: 0x" + hr.ToString("X8"));
+                            Console.Error.WriteLine("DIAG_ERROR: " + msg);
                             return 1;
                         }
-                        Thread.Sleep(500);
+                        Thread.Sleep(600);
                         continue;
                     }
 
-                    string activeDeviceId;
-                    device.GetId(out activeDeviceId);
-                    string activeDeviceName = GetDeviceName(device);
+                    WaveFormatEx fmt = new WaveFormatEx();
+                    bool isFloat = false;
+                    bool isPcm = false;
+                    string initMode = "";
+                    string activeDeviceId = "";
+                    string activeDeviceName = "Audio Output";
+                    string lastAttemptErr = "";
 
-                    object clientObj;
-                    hr = device.Activate(ref IID_IAudioClient, CLSCTX_ALL, IntPtr.Zero, out clientObj);
-                    if (hr != 0 || clientObj == null) throw new COMException("Activate IAudioClient failed", hr);
-                    audioClient = (IAudioClient)clientObj;
-
-                    hr = audioClient.GetMixFormat(out mixFormatPtr);
-                    if (hr != 0 || mixFormatPtr == IntPtr.Zero) throw new COMException("GetMixFormat failed", hr);
-
-                    var fmt = (WaveFormatEx)Marshal.PtrToStructure(mixFormatPtr, typeof(WaveFormatEx));
-                    bool isFloat = fmt.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
-                    bool isPcm = fmt.wFormatTag == WAVE_FORMAT_PCM;
-                    if (fmt.wFormatTag == WAVE_FORMAT_EXTENSIBLE && fmt.cbSize >= 22)
+                    foreach (string candId in candidates)
                     {
-                        var subFmtBytes = new byte[16];
-                        Marshal.Copy(IntPtr.Add(mixFormatPtr, 24), subFmtBytes, 0, 16);
-                        var subFmt = new Guid(subFmtBytes);
-                        isFloat = subFmt == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
-                        isPcm = subFmt == KSDATAFORMAT_SUBTYPE_PCM;
+                        IMMDevice candDev = null;
+                        try
+                        {
+                            if (enumerator.GetDevice(candId, out candDev) != 0 || candDev == null)
+                            {
+                                continue;
+                            }
+
+                            IAudioClient trialClient;
+                            WaveFormatEx trialFmt;
+                            bool trialFloat, trialPcm;
+                            string trialMode, trialErr;
+
+                            bool useForceAuto = string.Equals(candId, forceAutoconvertDeviceId, StringComparison.OrdinalIgnoreCase);
+                            if (TryInitializeLoopback(candDev, useForceAuto, out trialClient, out trialFmt, out trialFloat, out trialPcm, out trialMode, out trialErr))
+                            {
+                                device = candDev;
+                                candDev = null; // Ownership transferred
+                                audioClient = trialClient;
+                                fmt = trialFmt;
+                                isFloat = trialFloat;
+                                isPcm = trialPcm;
+                                initMode = trialMode;
+                                activeDeviceId = candId;
+                                activeDeviceName = GetDeviceName(device);
+                                break;
+                            }
+                            else
+                            {
+                                lastAttemptErr = GetDeviceName(candDev) + ": " + trialErr;
+                            }
+                        }
+                        finally
+                        {
+                            if (candDev != null)
+                            {
+                                try { Marshal.ReleaseComObject(candDev); } catch { }
+                            }
+                        }
                     }
 
-                    // 100ms buffer in 100ns units; SHARED + LOOPBACK works on 2ch, 5.1, 7.1, Dolby, Logitech G HUB, etc.
-                    long bufferDuration = 1000000;
-                    hr = audioClient.Initialize(
-                        AUDCLNT_SHAREMODE_SHARED,
-                        AUDCLNT_STREAMFLAGS_LOOPBACK,
-                        bufferDuration,
-                        0,
-                        mixFormatPtr,
-                        IntPtr.Zero
-                    );
-                    if (hr != 0) throw new COMException("IAudioClient.Initialize failed", hr);
+                    if (device == null || audioClient == null)
+                    {
+                        string msg = string.IsNullOrEmpty(lastAttemptErr)
+                            ? "Could not open any Windows audio playback device"
+                            : lastAttemptErr;
+                        if (msg != lastReportedError)
+                        {
+                            EmitStatus("WASAPI_ERR:" + msg);
+                            lastReportedError = msg;
+                        }
+                        if (diagMode)
+                        {
+                            Console.Error.WriteLine("DIAG_ERROR: " + msg);
+                            return 1;
+                        }
+                        pinnedActiveId = "";
+                        Thread.Sleep(600);
+                        continue;
+                    }
 
                     object capObj;
-                    hr = audioClient.GetService(ref IID_IAudioCaptureClient, out capObj);
+                    Guid capIid = IID_IAudioCaptureClient;
+                    int hr = audioClient.GetService(ref capIid, out capObj);
                     if (hr != 0 || capObj == null) throw new COMException("GetService IAudioCaptureClient failed", hr);
                     captureClient = (IAudioCaptureClient)capObj;
 
@@ -435,16 +983,25 @@ namespace WasapiTap
                     int channels = Math.Max(1, (int)fmt.nChannels);
                     int bytesPerSample = Math.Max(1, fmt.wBitsPerSample / 8);
                     int blockAlign = Math.Max(channels * bytesPerSample, (int)fmt.nBlockAlign);
+                    lastReportedError = "";
 
                     if (diagMode)
                     {
                         Console.WriteLine(
                             "OPEN_OK device=\"" + activeDeviceName +
-                            "\" sampleRate=" + sampleRate +
+                            "\" mode=" + initMode +
+                            " sampleRate=" + sampleRate +
                             " channels=" + channels +
                             " bits=" + fmt.wBitsPerSample +
                             " float=" + isFloat +
                             " pcm=" + isPcm
+                        );
+                    }
+                    else
+                    {
+                        EmitStatus(
+                            "WASAPI_OPEN:" + activeDeviceName + "|" +
+                            initMode + " · " + sampleRate + "Hz · " + channels + "ch"
                         );
                     }
 
@@ -456,7 +1013,10 @@ namespace WasapiTap
 
                     byte[] rawBuf = new byte[65536];
                     int ticksSinceAudio = 0;
-                    int ticksSinceDefaultCheck = 0;
+                    int ticksSinceEndpointCheck = 0;
+                    int meterMismatchWindows = 0;
+                    bool reportedSilentApo = false;
+                    double windowPeak = 0.0;
                     int diagTicks = 0;
                     double diagPeak = 0;
                     int diagPackets = 0;
@@ -512,6 +1072,14 @@ namespace WasapiTap
                                         {
                                             sample = BitConverter.ToSingle(rawBuf, sampleOffset);
                                         }
+                                        else if (isFloat && bytesPerSample == 8)
+                                        {
+                                            sample = BitConverter.ToDouble(rawBuf, sampleOffset);
+                                        }
+                                        else if (isPcm && bytesPerSample == 1)
+                                        {
+                                            sample = (rawBuf[sampleOffset] - 128) / 128.0;
+                                        }
                                         else if (isPcm && bytesPerSample == 2)
                                         {
                                             sample = BitConverter.ToInt16(rawBuf, sampleOffset) / 32768.0;
@@ -529,11 +1097,22 @@ namespace WasapiTap
                                         else surroundSum += sample;
                                     }
 
-                                    // Preserves full stereo level on 5.1/7.1 virtual surround headsets while retaining LFE/surround channels
-                                    double mono = (frontSum / frontCount) + surroundSum * 0.25;
+                                    // Preserves full stereo level on 5.1/7.1 headsets while safely falling back to surround channels if front is silent
+                                    double mono;
+                                    if (channels > frontCount && Math.Abs(frontSum) < 1e-6 && Math.Abs(surroundSum) > 1e-6)
+                                    {
+                                        mono = surroundSum / (channels - frontCount);
+                                    }
+                                    else
+                                    {
+                                        mono = (frontSum / frontCount) + surroundSum * 0.25;
+                                    }
                                     if (mono > 1.0) mono = 1.0;
                                     else if (mono < -1.0) mono = -1.0;
-                                    if (Math.Abs(mono) > diagPeak) diagPeak = Math.Abs(mono);
+
+                                    double absMono = Math.Abs(mono);
+                                    if (absMono > diagPeak) diagPeak = absMono;
+                                    if (absMono > windowPeak) windowPeak = absMono;
 
                                     ring[ringPos] = (float)mono;
                                     ringPos = (ringPos + 1) & (FFT_SIZE - 1);
@@ -620,22 +1199,85 @@ namespace WasapiTap
                             }
                         }
 
-                        // Periodically verify default playback device hasn't switched (e.g. headset unplugged)
-                        if (string.IsNullOrEmpty(requestedDeviceId) || requestedDeviceId == "default")
+                        // Periodically follow default playback device switches AND auto-hunt any active audio output on laptops
+                        if (isAutoMode)
                         {
-                            ticksSinceDefaultCheck++;
-                            if (ticksSinceDefaultCheck >= 75)
+                            ticksSinceEndpointCheck++;
+                            if (ticksSinceEndpointCheck >= 75)
                             {
-                                ticksSinceDefaultCheck = 0;
-                                IMMDevice currentDefault;
-                                if (enumerator.GetDefaultAudioEndpoint(eRender, eConsole, out currentDefault) == 0 && currentDefault != null)
+                                ticksSinceEndpointCheck = 0;
+                                bool currentlySilent = windowPeak < 0.0004;
+                                windowPeak = 0.0;
+
+                                string defaultMmId = GetDefaultDeviceId(enumerator, eMultimedia);
+                                if (string.IsNullOrEmpty(defaultMmId))
                                 {
-                                    string curId;
-                                    currentDefault.GetId(out curId);
-                                    Marshal.ReleaseComObject(currentDefault);
-                                    if (!string.Equals(curId, activeDeviceId, StringComparison.OrdinalIgnoreCase))
+                                    defaultMmId = GetDefaultDeviceId(enumerator, eConsole);
+                                }
+
+                                if (currentlySilent)
+                                {
+                                    // Scan all active render endpoints — if music is playing on Bluetooth headphones, speakers, HDMI, or Volume Mixer output, switch automatically!
+                                    string loudestId, loudestName;
+                                    float loudestPeak;
+                                    FindLoudestActiveDevice(enumerator, out loudestId, out loudestName, out loudestPeak);
+
+                                    if (loudestPeak > 0.0008f && !string.Equals(loudestId, activeDeviceId, StringComparison.OrdinalIgnoreCase))
                                     {
-                                        break; // Re-open on newly selected Windows default output device!
+                                        pinnedActiveId = loudestId;
+                                        forceAutoconvertDeviceId = "";
+                                        if (!diagMode) EmitStatus("WASAPI_SWITCH:" + loudestName);
+                                        break;
+                                    }
+
+                                    // Detect Intel SST / Realtek APO silent loopback: endpoint meter shows live audio, yet our loopback buffer got pure zeros!
+                                    float selfPeak = GetEndpointPeak(device);
+                                    if (selfPeak > 0.002f)
+                                    {
+                                        meterMismatchWindows++;
+                                        if (meterMismatchWindows >= 2)
+                                        {
+                                            if (initMode != "autoconvert-48k" && !string.Equals(forceAutoconvertDeviceId, activeDeviceId, StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                forceAutoconvertDeviceId = activeDeviceId;
+                                                pinnedActiveId = activeDeviceId;
+                                                if (!diagMode) EmitStatus("WASAPI_SWITCH:" + activeDeviceName + " (retrying format)");
+                                                break;
+                                            }
+                                            else if (!reportedSilentApo && !diagMode)
+                                            {
+                                                reportedSilentApo = true;
+                                                EmitStatus("WASAPI_SILENT_APO:" + activeDeviceName);
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        meterMismatchWindows = 0;
+                                    }
+
+                                    // Otherwise follow Windows default playback device changes
+                                    if (!string.IsNullOrEmpty(defaultMmId) && !string.Equals(defaultMmId, activeDeviceId, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        pinnedActiveId = "";
+                                        forceAutoconvertDeviceId = "";
+                                        break;
+                                    }
+                                }
+                                else
+                                {
+                                    meterMismatchWindows = 0;
+                                    reportedSilentApo = false;
+                                    if (!string.IsNullOrEmpty(defaultMmId) && !string.Equals(defaultMmId, activeDeviceId, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        // We're currently getting audio on a non-default device (e.g. Volume Mixer routing);
+                                        // only switch to the new default if the new default is also actively playing
+                                        if (GetDevicePeakById(enumerator, defaultMmId) > 0.0008f)
+                                        {
+                                            pinnedActiveId = "";
+                                            forceAutoconvertDeviceId = "";
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -646,11 +1288,18 @@ namespace WasapiTap
                 }
                 catch (Exception ex)
                 {
+                    string msg = ex.Message;
+                    if (msg != lastReportedError)
+                    {
+                        EmitStatus("WASAPI_ERR:" + msg);
+                        lastReportedError = msg;
+                    }
                     if (diagMode)
                     {
-                        Console.Error.WriteLine("DIAG_ERROR: " + ex.Message);
+                        Console.Error.WriteLine("DIAG_ERROR: " + msg);
                         return 1;
                     }
+                    pinnedActiveId = "";
                     Thread.Sleep(500);
                 }
                 finally
@@ -659,10 +1308,18 @@ namespace WasapiTap
                     {
                         try { audioClient.Stop(); } catch { }
                     }
-                    if (mixFormatPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(mixFormatPtr);
-                    if (captureClient != null) Marshal.ReleaseComObject(captureClient);
-                    if (audioClient != null) Marshal.ReleaseComObject(audioClient);
-                    if (device != null) Marshal.ReleaseComObject(device);
+                    if (captureClient != null)
+                    {
+                        try { Marshal.ReleaseComObject(captureClient); } catch { }
+                    }
+                    if (audioClient != null)
+                    {
+                        try { Marshal.ReleaseComObject(audioClient); } catch { }
+                    }
+                    if (device != null)
+                    {
+                        try { Marshal.ReleaseComObject(device); } catch { }
+                    }
                 }
             }
         }

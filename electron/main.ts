@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, session, shell } from 'electron';
 import { SpotifyService } from './spotify';
 import { LyricsService } from './lyrics';
 import { NativeAudioTapService } from './audioTap';
@@ -118,11 +118,19 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('audio:start-tap', (_event, deviceId: string) =>
-    audioTapService.start(deviceId, (packet) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('audio:frame', packet);
+    audioTapService.start(
+      deviceId,
+      (packet) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('audio:frame', packet);
+        }
+      },
+      (status) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('audio:status', status);
+        }
       }
-    })
+    )
   );
 
   ipcMain.handle('audio:stop-tap', () => {
@@ -181,6 +189,21 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    // Built-in Chromium WASAPI loopback handler used automatically if wasapi-tap.exe is blocked or fails
+    session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+      try {
+        const sources = await desktopCapturer.getSources({ types: ['screen'] });
+        if (sources.length === 0) {
+          callback({});
+          return;
+        }
+        callback({ video: sources[0], audio: 'loopback' });
+      } catch (err) {
+        console.error('[audioTap] Display media loopback fallback failed:', err);
+        callback({});
+      }
+    });
+
     spotifyService.init();
     lyricsService.init();
     registerIpcHandlers();

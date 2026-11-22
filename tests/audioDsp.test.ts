@@ -55,6 +55,19 @@ describe('AudioDsp', () => {
     expect(frame.vocal).toBeGreaterThan(0.45);
   });
 
+  it('locks onto very quiet laptop speaker volume while staying silent at zero', () => {
+    const dsp = new AudioDsp();
+    const { freq, time } = makeToneBuffers(12, 10, 0.012);
+
+    let frame = dsp.frame;
+    for (let i = 0; i < 140; i++) {
+      frame = dsp.processLive(freq, time, 48000, 2048, 1 / 60, i * 16.67);
+    }
+
+    expect(frame.audioActive).toBeGreaterThan(0.85);
+    expect(frame.bass).toBeGreaterThan(0.45);
+  });
+
   it('fires a crisp kick transient and decays cleanly', () => {
     const dsp = new AudioDsp();
     const quiet = makeToneBuffers(20, 22, 0.06);

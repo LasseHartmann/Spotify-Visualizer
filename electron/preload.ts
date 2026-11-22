@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   NativeAudioPacket,
+  NativeAudioStatus,
   PlaybackControlAction,
   TrackInfo,
   VisualizerApi,
@@ -37,6 +38,15 @@ const api: VisualizerApi = {
       ipcRenderer.on('audio:frame', listener);
       return () => {
         ipcRenderer.removeListener('audio:frame', listener);
+      };
+    },
+    onStatus: (callback: (status: NativeAudioStatus) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: NativeAudioStatus) => {
+        callback(status);
+      };
+      ipcRenderer.on('audio:status', listener);
+      return () => {
+        ipcRenderer.removeListener('audio:status', listener);
       };
     },
   },

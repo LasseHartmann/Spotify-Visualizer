@@ -1,6 +1,6 @@
 {
   "name": "spotify-visualizer",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Audio-reactive full-screen synced lyrics visualizer for Spotify on Windows",
   "author": "Lasse Hartmann",
   "license": "MIT",

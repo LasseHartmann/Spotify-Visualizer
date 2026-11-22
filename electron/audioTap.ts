@@ -2,7 +2,11 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
-import type { NativeAudioPacket, PlaybackControlAction } from '@shared/types';
+import type {
+  NativeAudioPacket,
+  NativeAudioStatus,
+  PlaybackControlAction,
+} from '@shared/types';
 
 const MAGIC = Buffer.from('SVA1', 'ascii');
 const HALF_FFT = 1024;
@@ -12,6 +16,7 @@ const PACKET_SIZE = 8 + HALF_FFT + FFT_SIZE;
 export class NativeAudioTapService {
   private proc: ChildProcess | null = null;
   private activeDeviceId: string | null = null;
+  private isStopping = false;
 
   private getHelperPath(): string {
     if (app.isPackaged) {
@@ -22,11 +27,14 @@ export class NativeAudioTapService {
 
   public start(
     deviceId: string,
-    onFrame: (packet: NativeAudioPacket) => void
+    onFrame: (packet: NativeAudioPacket) => void,
+    onStatus?: (status: NativeAudioStatus) => void
   ): boolean {
     const helperPath = this.getHelperPath();
     if (!fs.existsSync(helperPath)) {
+      const msg = 'Audio helper missing (may have been blocked by antivirus)';
       console.error('[audioTap] Missing helper binary at:', helperPath);
+      onStatus?.({ state: 'error', backend: 'wasapi', message: msg });
       return false;
     }
 
@@ -36,16 +44,31 @@ export class NativeAudioTapService {
     }
 
     this.stop();
+    this.isStopping = false;
 
-    const child = spawn(helperPath, ['--device', normalizedId], {
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    });
+    let child: ChildProcess;
+    try {
+      child = spawn(helperPath, ['--device', normalizedId], {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error('[audioTap] Synchronous spawn failure:', detail);
+      onStatus?.({
+        state: 'error',
+        backend: 'wasapi',
+        message: `Could not launch audio helper (${detail})`,
+      });
+      return false;
+    }
 
     this.proc = child;
     this.activeDeviceId = normalizedId;
+    onStatus?.({ state: 'starting', backend: 'wasapi' });
 
     let pending: Buffer = Buffer.alloc(0);
+    let stderrPending = '';
 
     child.stdout?.on('data', (chunk: Buffer) => {
       if (this.proc !== child) return;
@@ -83,10 +106,68 @@ export class NativeAudioTapService {
       }
     });
 
-    child.on('exit', () => {
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (this.proc !== child) return;
+      stderrPending += chunk.toString('utf8');
+      const lines = stderrPending.split(/\r?\n/);
+      stderrPending = lines.pop() ?? '';
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        if (line.startsWith('WASAPI_OPEN:')) {
+          const payload = line.slice('WASAPI_OPEN:'.length);
+          const sepIdx = payload.indexOf('|');
+          const deviceName = (sepIdx >= 0 ? payload.slice(0, sepIdx) : payload).trim();
+          const detail = sepIdx >= 0 ? payload.slice(sepIdx + 1).trim() : undefined;
+          onStatus?.({
+            state: 'active',
+            backend: 'wasapi',
+            deviceName: deviceName || 'Windows Audio',
+            message: detail,
+          });
+        } else if (line.startsWith('WASAPI_SWITCH:')) {
+          const deviceName = line.slice('WASAPI_SWITCH:'.length).trim();
+          onStatus?.({
+            state: 'active',
+            backend: 'wasapi',
+            deviceName: deviceName || 'Windows Audio',
+          });
+        } else if (line.startsWith('WASAPI_SILENT_APO:')) {
+          const deviceName = line.slice('WASAPI_SILENT_APO:'.length).trim();
+          console.warn('[audioTap] Silent APO detected on:', deviceName);
+          onStatus?.({
+            state: 'silent_apo',
+            backend: 'wasapi',
+            deviceName: deviceName || 'Windows Audio',
+            message:
+              'Windows audio driver/enhancements returned silence — trying built-in fallback',
+          });
+        } else if (line.startsWith('WASAPI_ERR:')) {
+          const message = line.slice('WASAPI_ERR:'.length).trim();
+          console.warn('[audioTap] Helper warning:', message);
+          onStatus?.({
+            state: 'error',
+            backend: 'wasapi',
+            message: message || 'WASAPI loopback error',
+          });
+        }
+      }
+    });
+
+    child.on('exit', (code, signal) => {
       if (this.proc === child) {
         this.proc = null;
         this.activeDeviceId = null;
+        if (!this.isStopping) {
+          console.warn(`[audioTap] wasapi-tap.exe exited unexpectedly (code=${code}, signal=${signal})`);
+          onStatus?.({
+            state: 'error',
+            backend: 'wasapi',
+            message: `Audio helper stopped (exit ${code ?? signal ?? 'unknown'})`,
+          });
+        }
       }
     });
 
@@ -95,6 +176,13 @@ export class NativeAudioTapService {
       if (this.proc === child) {
         this.proc = null;
         this.activeDeviceId = null;
+        if (!this.isStopping) {
+          onStatus?.({
+            state: 'error',
+            backend: 'wasapi',
+            message: `Audio helper blocked or failed to launch (${err.message})`,
+          });
+        }
       }
     });
 
@@ -103,6 +191,7 @@ export class NativeAudioTapService {
 
   public stop(): void {
     const child = this.proc;
+    this.isStopping = true;
     this.proc = null;
     this.activeDeviceId = null;
     if (!child) return;

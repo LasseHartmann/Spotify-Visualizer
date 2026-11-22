@@ -11,7 +11,12 @@ import type {
   ThemePalette,
   TrackInfo,
 } from '@shared/types';
-import type { AudioCaptureStatus, AudioEngine } from '@/audio/audioEngine';
+import {
+  INITIAL_AUDIO_DIAGNOSTIC,
+  type AudioCaptureStatus,
+  type AudioDiagnosticInfo,
+  type AudioEngine,
+} from '@/audio/audioEngine';
 import { parseLrc } from '@/lib/lrcParser';
 import {
   DEFAULT_PALETTE,
@@ -124,6 +129,7 @@ export function App() {
   const [sweepMode, setSweepMode] = useState<SweepMode>(loadSavedSweepMode);
   const [audioEnabled, setAudioEnabled] = useState(!isWeb);
   const [audioStatus, setAudioStatus] = useState<AudioCaptureStatus>('idle');
+  const [audioDiag, setAudioDiag] = useState<AudioDiagnosticInfo>(INITIAL_AUDIO_DIAGNOSTIC);
   const [colorMode, setColorMode] = useState<ColorMode>(loadSavedColorMode);
   const [customColor, setCustomColor] = useState<string>(loadSavedCustomColor);
 
@@ -601,10 +607,13 @@ export function App() {
     if (isWeb) {
       setShowAudioMenu((v) => !v);
       revealHud();
+    } else if (audioEnabled && audioStatus === 'error') {
+      flashToast('Retrying Windows audio capture…', 2000);
+      void audioEngineRef.current?.startCapture('default');
     } else {
       setAudioEnabled((v) => !v);
     }
-  }, [isWeb, revealHud]);
+  }, [audioEnabled, audioStatus, flashToast, isWeb, revealHud]);
 
   const handleSelectWebAudioSource = useCallback(
     async (source: 'display' | 'mic' | 'off') => {
@@ -806,6 +815,7 @@ export function App() {
         colorMode={colorMode}
         isPlaying={Boolean(playback?.isPlaying)}
         onAudioStatusChange={setAudioStatus}
+        onAudioDiagnosticChange={setAudioDiag}
         audioEngineRef={audioEngineRef}
       />
 
@@ -850,6 +860,7 @@ export function App() {
             hasWordSync={hasWordSync}
             audioEnabled={audioEnabled}
             audioStatus={audioStatus}
+            audioDiag={audioDiag}
             showAudioMenu={showAudioMenu}
             colorMode={colorMode}
             customColor={customColor}

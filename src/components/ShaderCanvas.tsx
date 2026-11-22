@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import type { ColorMode, RGB, ShaderPresetId, ThemePalette } from '@shared/types';
-import { AudioEngine, type AudioCaptureStatus, type AudioFrame } from '@/audio/audioEngine';
+import {
+  AudioEngine,
+  type AudioCaptureStatus,
+  type AudioDiagnosticInfo,
+  type AudioFrame,
+} from '@/audio/audioEngine';
 import { rgbToCss, sampleMoodColor } from '@/lib/palette';
 import { isWebPlatform } from '@/platform/webBridge';
 import { ShaderRenderer } from '@/shaders/renderer';
@@ -13,6 +18,7 @@ interface ShaderCanvasProps {
   colorMode: ColorMode;
   isPlaying: boolean;
   onAudioStatusChange: (status: AudioCaptureStatus) => void;
+  onAudioDiagnosticChange?: (info: AudioDiagnosticInfo) => void;
   audioEngineRef: React.MutableRefObject<AudioEngine | null>;
 }
 
@@ -30,6 +36,7 @@ export function ShaderCanvas({
   colorMode,
   isPlaying,
   onAudioStatusChange,
+  onAudioDiagnosticChange,
   audioEngineRef,
 }: ShaderCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -60,7 +67,7 @@ export function ShaderCanvas({
     renderer.setColorCycle(colorModeRef.current === 'album-cycle');
     rendererRef.current = renderer;
 
-    const audioEngine = new AudioEngine(onAudioStatusChange);
+    const audioEngine = new AudioEngine(onAudioStatusChange, onAudioDiagnosticChange);
     audioEngine.setEnabled(audioEnabledRef.current);
     audioEngineRef.current = audioEngine;
 
@@ -118,7 +125,7 @@ export function ShaderCanvas({
       renderer.dispose();
       rendererRef.current = null;
     };
-  }, [audioEngineRef, onAudioStatusChange]);
+  }, [audioEngineRef, onAudioDiagnosticChange, onAudioStatusChange]);
 
   useEffect(() => {
     rendererRef.current?.setPreset(preset);
