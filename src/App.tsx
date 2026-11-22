@@ -49,17 +49,24 @@ const COLOR_MODE_CYCLE: ColorMode[] = ['album-cycle', 'album-lock', 'custom'];
 const SWEEP_MODE_CYCLE: SweepMode[] = ['auto', 'always', 'off'];
 
 function loadSavedPreset(): ShaderPresetId {
-  const saved = localStorage.getItem('sv:preset:v2');
+  const saved = localStorage.getItem('sv:preset:v3');
   if (
-    saved === 'pulse' ||
-    saved === 'eclipse' ||
-    saved === 'tide' ||
-    saved === 'spectrum' ||
+    saved === 'atlas' ||
+    saved === 'orbit' ||
+    saved === 'terrain' ||
+    saved === 'symphony' ||
+    saved === 'waves' ||
     saved === 'blank'
   ) {
     return saved;
   }
-  return 'pulse';
+  const legacy = localStorage.getItem('sv:preset:v2');
+  if (legacy === 'spectrum') return 'atlas';
+  if (legacy === 'eclipse') return 'orbit';
+  if (legacy === 'pulse') return 'symphony';
+  if (legacy === 'tide') return 'waves';
+  if (legacy === 'blank') return 'blank';
+  return 'atlas';
 }
 
 function loadSavedLayout(): LyricsLayoutMode {
@@ -461,7 +468,7 @@ export function App() {
 
   const selectPreset = useCallback((next: ShaderPresetId) => {
     setPreset(next);
-    localStorage.setItem('sv:preset:v2', next);
+    localStorage.setItem('sv:preset:v3', next);
   }, []);
 
   const cycleLayout = useCallback(() => {
@@ -713,22 +720,26 @@ export function App() {
           revealHud();
           break;
         case '1':
-          selectPreset('pulse');
+          selectPreset('atlas');
           revealHud();
           break;
         case '2':
-          selectPreset('eclipse');
+          selectPreset('orbit');
           revealHud();
           break;
         case '3':
-          selectPreset('tide');
+          selectPreset('terrain');
           revealHud();
           break;
         case '4':
-          selectPreset('spectrum');
+          selectPreset('symphony');
           revealHud();
           break;
         case '5':
+          selectPreset('waves');
+          revealHud();
+          break;
+        case '6':
           selectPreset('blank');
           revealHud();
           break;
@@ -813,6 +824,7 @@ export function App() {
         blankColor={blankColor}
         audioEnabled={audioEnabled}
         colorMode={colorMode}
+        layoutMode={layoutMode}
         isPlaying={Boolean(playback?.isPlaying)}
         onAudioStatusChange={setAudioStatus}
         onAudioDiagnosticChange={setAudioDiag}

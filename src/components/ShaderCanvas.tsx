@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
-import type { ColorMode, RGB, ShaderPresetId, ThemePalette } from '@shared/types';
+import type {
+  ColorMode,
+  LyricsLayoutMode,
+  RGB,
+  ShaderPresetId,
+  ThemePalette,
+} from '@shared/types';
 import {
   AudioEngine,
   type AudioCaptureStatus,
@@ -16,6 +22,7 @@ interface ShaderCanvasProps {
   blankColor: RGB;
   audioEnabled: boolean;
   colorMode: ColorMode;
+  layoutMode: LyricsLayoutMode;
   isPlaying: boolean;
   onAudioStatusChange: (status: AudioCaptureStatus) => void;
   onAudioDiagnosticChange?: (info: AudioDiagnosticInfo) => void;
@@ -34,6 +41,7 @@ export function ShaderCanvas({
   blankColor,
   audioEnabled,
   colorMode,
+  layoutMode,
   isPlaying,
   onAudioStatusChange,
   onAudioDiagnosticChange,
@@ -43,6 +51,7 @@ export function ShaderCanvas({
   const rendererRef = useRef<ShaderRenderer | null>(null);
   const isPlayingRef = useRef(isPlaying);
   const colorModeRef = useRef(colorMode);
+  const layoutModeRef = useRef(layoutMode);
   const presetRef = useRef(preset);
   const paletteRef = useRef(palette);
   const blankColorRef = useRef(blankColor);
@@ -50,6 +59,7 @@ export function ShaderCanvas({
 
   isPlayingRef.current = isPlaying;
   colorModeRef.current = colorMode;
+  layoutModeRef.current = layoutMode;
   presetRef.current = preset;
   paletteRef.current = palette;
   blankColorRef.current = blankColor;
@@ -60,11 +70,12 @@ export function ShaderCanvas({
     if (!canvas) return;
 
     const renderer = new ShaderRenderer(canvas);
-    // Apply initial saved state immediately so Blank / Color Mode / Preset / Palette take effect on frame 1
+    // Apply initial saved state immediately so Blank / Color Mode / Preset / Palette / Lyrics mode take effect on frame 1
     renderer.setPreset(presetRef.current, true);
     renderer.setPalette(paletteRef.current);
     renderer.setBlankColor(blankColorRef.current, true);
     renderer.setColorCycle(colorModeRef.current === 'album-cycle');
+    renderer.setLyricsMode(layoutModeRef.current, true);
     rendererRef.current = renderer;
 
     const audioEngine = new AudioEngine(onAudioStatusChange, onAudioDiagnosticChange);
@@ -142,6 +153,10 @@ export function ShaderCanvas({
   useEffect(() => {
     rendererRef.current?.setColorCycle(colorMode === 'album-cycle');
   }, [colorMode]);
+
+  useEffect(() => {
+    rendererRef.current?.setLyricsMode(layoutMode);
+  }, [layoutMode]);
 
   useEffect(() => {
     audioEngineRef.current?.setEnabled(audioEnabled);

@@ -8,10 +8,18 @@ import type {
   PlaybackControlAction,
 } from '@shared/types';
 
-const MAGIC = Buffer.from('SVA1', 'ascii');
+const MAGIC_V2 = Buffer.from('SVA2', 'ascii');
+const HEADER_SIZE_V2 = 16;
 const HALF_FFT = 1024;
 const FFT_SIZE = 2048;
-const PACKET_SIZE = 8 + HALF_FFT + FFT_SIZE;
+const STEREO_BINS = 256;
+const OFF_FREQ = HEADER_SIZE_V2;
+const OFF_TIME = OFF_FREQ + HALF_FFT;
+const OFF_L_FREQ = OFF_TIME + FFT_SIZE;
+const OFF_R_FREQ = OFF_L_FREQ + STEREO_BINS;
+const OFF_L_TIME = OFF_R_FREQ + STEREO_BINS;
+const OFF_R_TIME = OFF_L_TIME + STEREO_BINS;
+const PACKET_SIZE_V2 = OFF_R_TIME + STEREO_BINS;
 
 export class NativeAudioTapService {
   private proc: ChildProcess | null = null;
@@ -77,8 +85,8 @@ export class NativeAudioTapService {
 
       let latestPacket: NativeAudioPacket | null = null;
 
-      while (pending.length >= PACKET_SIZE) {
-        const magicIdx = pending.indexOf(MAGIC);
+      while (pending.length >= PACKET_SIZE_V2) {
+        const magicIdx = pending.indexOf(MAGIC_V2);
         if (magicIdx === -1) {
           // Keep last 3 bytes in case magic header splits across chunks
           pending = pending.subarray(Math.max(0, pending.length - 3));
@@ -87,18 +95,38 @@ export class NativeAudioTapService {
         if (magicIdx > 0) {
           pending = pending.subarray(magicIdx);
         }
-        if (pending.length < PACKET_SIZE) {
+        if (pending.length < PACKET_SIZE_V2) {
           break;
         }
 
         const sampleRate = pending.readUInt32LE(4);
+        const stereoWidth = pending.readFloatLE(8);
+        const stereoBalance = pending.readFloatLE(12);
         const freqBins = new Uint8Array(HALF_FFT);
         const timeBins = new Uint8Array(FFT_SIZE);
-        pending.copy(freqBins, 0, 8, 8 + HALF_FFT);
-        pending.copy(timeBins, 0, 8 + HALF_FFT, PACKET_SIZE);
+        const leftFreqBins = new Uint8Array(STEREO_BINS);
+        const rightFreqBins = new Uint8Array(STEREO_BINS);
+        const leftTimeBins = new Uint8Array(STEREO_BINS);
+        const rightTimeBins = new Uint8Array(STEREO_BINS);
+        pending.copy(freqBins, 0, OFF_FREQ, OFF_TIME);
+        pending.copy(timeBins, 0, OFF_TIME, OFF_L_FREQ);
+        pending.copy(leftFreqBins, 0, OFF_L_FREQ, OFF_R_FREQ);
+        pending.copy(rightFreqBins, 0, OFF_R_FREQ, OFF_L_TIME);
+        pending.copy(leftTimeBins, 0, OFF_L_TIME, OFF_R_TIME);
+        pending.copy(rightTimeBins, 0, OFF_R_TIME, PACKET_SIZE_V2);
 
-        latestPacket = { sampleRate, freqBins, timeBins };
-        pending = pending.subarray(PACKET_SIZE);
+        latestPacket = {
+          sampleRate,
+          freqBins,
+          timeBins,
+          leftFreqBins,
+          rightFreqBins,
+          leftTimeBins,
+          rightTimeBins,
+          stereoWidth: Number.isFinite(stereoWidth) ? stereoWidth : 0,
+          stereoBalance: Number.isFinite(stereoBalance) ? stereoBalance : 0,
+        };
+        pending = pending.subarray(PACKET_SIZE_V2);
       }
 
       if (latestPacket) {

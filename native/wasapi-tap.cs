@@ -121,6 +121,7 @@ namespace WasapiTap
         const ushort WAVE_FORMAT_EXTENSIBLE = 0xFFFE;
         const int FFT_SIZE = 2048;
         const int HALF_FFT = FFT_SIZE / 2;
+        const int STEREO_BINS = 256;
 
         static Guid IID_IAudioClient = new Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2");
         static Guid IID_IAudioCaptureClient = new Guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317");
@@ -849,18 +850,43 @@ namespace WasapiTap
             var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
             var stdout = Console.OpenStandardOutput();
             var hann = BuildHannWindow(FFT_SIZE);
-            var ring = new float[FFT_SIZE];
+            var ringL = new float[FFT_SIZE];
+            var ringR = new float[FFT_SIZE];
             int ringPos = 0;
 
-            var re = new double[FFT_SIZE];
-            var im = new double[FFT_SIZE];
+            var reL = new double[FFT_SIZE];
+            var imL = new double[FFT_SIZE];
+            var reR = new double[FFT_SIZE];
+            var imR = new double[FFT_SIZE];
             var smoothMag = new double[HALF_FFT];
-            var packet = new byte[8 + HALF_FFT + FFT_SIZE];
-            // Header magic: "SVA1"
+            var smoothMagL = new double[HALF_FFT];
+            var smoothMagR = new double[HALF_FFT];
+            double smoothStereoWidth = 0.0;
+            double smoothStereoBalance = 0.0;
+
+            // SVA2 packet layout (4112 bytes):
+            // [0..3]     "SVA2"
+            // [4..7]     uint32 sampleRate
+            // [8..11]    float32 stereoWidth (0..1)
+            // [12..15]   float32 stereoBalance (-1..+1)
+            // [16..1039] combined FFT (1024 bytes)
+            // [1040..3087] combined PCM waveform (2048 bytes)
+            // [3088..3343] log-mapped Left FFT (256 bytes)
+            // [3344..3599] log-mapped Right FFT (256 bytes)
+            // [3600..3855] Left waveform (256 bytes)
+            // [3856..4111] Right waveform (256 bytes)
+            const int HEADER_SIZE = 16;
+            const int OFF_FREQ = HEADER_SIZE;
+            const int OFF_TIME = OFF_FREQ + HALF_FFT;
+            const int OFF_L_FREQ = OFF_TIME + FFT_SIZE;
+            const int OFF_R_FREQ = OFF_L_FREQ + STEREO_BINS;
+            const int OFF_L_TIME = OFF_R_FREQ + STEREO_BINS;
+            const int OFF_R_TIME = OFF_L_TIME + STEREO_BINS;
+            var packet = new byte[OFF_R_TIME + STEREO_BINS];
             packet[0] = (byte)'S';
             packet[1] = (byte)'V';
             packet[2] = (byte)'A';
-            packet[3] = (byte)'1';
+            packet[3] = (byte)'2';
 
             bool isAutoMode = string.IsNullOrEmpty(requestedDeviceId) || requestedDeviceId == "default";
             string pinnedActiveId = "";
@@ -1048,7 +1074,8 @@ namespace WasapiTap
                             {
                                 for (uint f = 0; f < framesRead; f++)
                                 {
-                                    ring[ringPos] = 0f;
+                                    ringL[ringPos] = 0f;
+                                    ringR[ringPos] = 0f;
                                     ringPos = (ringPos + 1) & (FFT_SIZE - 1);
                                 }
                             }
@@ -1061,9 +1088,13 @@ namespace WasapiTap
                                 for (int f = 0; f < (int)framesRead; f++)
                                 {
                                     int frameOffset = f * blockAlign;
-                                    double frontSum = 0.0;
-                                    double surroundSum = 0.0;
-                                    int frontCount = Math.Min(2, channels);
+                                    double chL = 0.0;
+                                    double chR = 0.0;
+                                    double frontEnergy = 0.0;
+                                    double surroundL = 0.0;
+                                    double surroundR = 0.0;
+                                    double centerLfe = 0.0;
+
                                     for (int ch = 0; ch < channels; ch++)
                                     {
                                         int sampleOffset = frameOffset + ch * bytesPerSample;
@@ -1093,28 +1124,61 @@ namespace WasapiTap
                                         {
                                             sample = BitConverter.ToInt32(rawBuf, sampleOffset) / 2147483648.0;
                                         }
-                                        if (ch < frontCount) frontSum += sample;
-                                        else surroundSum += sample;
+
+                                        if (channels == 1)
+                                        {
+                                            chL = sample;
+                                            chR = sample;
+                                            frontEnergy += Math.Abs(sample);
+                                        }
+                                        else if (ch == 0)
+                                        {
+                                            chL = sample;
+                                            frontEnergy += Math.Abs(sample);
+                                        }
+                                        else if (ch == 1)
+                                        {
+                                            chR = sample;
+                                            frontEnergy += Math.Abs(sample);
+                                        }
+                                        else if (channels >= 6 && (ch == 2 || ch == 3))
+                                        {
+                                            // Standard 5.1 / 7.1 Center (ch 2) and LFE (ch 3) split evenly to L & R
+                                            centerLfe += sample * (ch == 2 ? 0.5 : 0.3);
+                                        }
+                                        else if ((ch & 1) == 0)
+                                        {
+                                            surroundL += sample;
+                                        }
+                                        else
+                                        {
+                                            surroundR += sample;
+                                        }
                                     }
 
-                                    // Preserves full stereo level on 5.1/7.1 headsets while safely falling back to surround channels if front is silent
-                                    double mono;
-                                    if (channels > frontCount && Math.Abs(frontSum) < 1e-6 && Math.Abs(surroundSum) > 1e-6)
+                                    double leftSample, rightSample;
+                                    if (channels > 2 && frontEnergy < 1e-6 && (Math.Abs(surroundL) + Math.Abs(surroundR) + Math.Abs(centerLfe)) > 1e-6)
                                     {
-                                        mono = surroundSum / (channels - frontCount);
+                                        leftSample = surroundL * 0.5 + centerLfe;
+                                        rightSample = surroundR * 0.5 + centerLfe;
                                     }
                                     else
                                     {
-                                        mono = (frontSum / frontCount) + surroundSum * 0.25;
+                                        leftSample = chL + centerLfe + surroundL * 0.25;
+                                        rightSample = chR + centerLfe + surroundR * 0.25;
                                     }
-                                    if (mono > 1.0) mono = 1.0;
-                                    else if (mono < -1.0) mono = -1.0;
 
-                                    double absMono = Math.Abs(mono);
-                                    if (absMono > diagPeak) diagPeak = absMono;
-                                    if (absMono > windowPeak) windowPeak = absMono;
+                                    if (leftSample > 1.0) leftSample = 1.0;
+                                    else if (leftSample < -1.0) leftSample = -1.0;
+                                    if (rightSample > 1.0) rightSample = 1.0;
+                                    else if (rightSample < -1.0) rightSample = -1.0;
 
-                                    ring[ringPos] = (float)mono;
+                                    double absPeak = Math.Max(Math.Abs(leftSample), Math.Abs(rightSample));
+                                    if (absPeak > diagPeak) diagPeak = absPeak;
+                                    if (absPeak > windowPeak) windowPeak = absPeak;
+
+                                    ringL[ringPos] = (float)leftSample;
+                                    ringR[ringPos] = (float)rightSample;
                                     ringPos = (ringPos + 1) & (FFT_SIZE - 1);
                                 }
                             }
@@ -1137,28 +1201,77 @@ namespace WasapiTap
                                 int silenceFill = Math.Min(FFT_SIZE, (int)(sampleRate / 60));
                                 for (int s = 0; s < silenceFill; s++)
                                 {
-                                    ring[ringPos] = 0f;
+                                    ringL[ringPos] = 0f;
+                                    ringR[ringPos] = 0f;
                                     ringPos = (ringPos + 1) & (FFT_SIZE - 1);
                                 }
                             }
                         }
 
-                        // Compute 2048-pt Hann-windowed FFT & pack byte arrays matching Web Audio AnalyserNode
+                        // Compute stereo metrics + 2048-pt Hann-windowed L & R FFTs (combined mid FFT = 0.5*(L+R) by linearity!)
+                        double sumL2 = 0.0;
+                        double sumR2 = 0.0;
+                        double sumMid2 = 0.0;
+                        double sumSide2 = 0.0;
+
                         for (int i = 0; i < FFT_SIZE; i++)
                         {
-                            float sample = ring[(ringPos + i) & (FFT_SIZE - 1)];
-                            re[i] = sample * hann[i];
-                            im[i] = 0.0;
+                            int idx = (ringPos + i) & (FFT_SIZE - 1);
+                            float sL = ringL[idx];
+                            float sR = ringR[idx];
+                            float mid = 0.5f * (sL + sR);
+                            float side = 0.5f * (sL - sR);
 
-                            int waveByte = (int)Math.Round(128.0 + sample * 127.0);
+                            sumL2 += sL * sL;
+                            sumR2 += sR * sR;
+                            sumMid2 += mid * mid;
+                            sumSide2 += side * side;
+
+                            double w = hann[i];
+                            reL[i] = sL * w;
+                            imL[i] = 0.0;
+                            reR[i] = sR * w;
+                            imR[i] = 0.0;
+
+                            int waveByte = (int)Math.Round(128.0 + mid * 127.0);
                             if (waveByte < 0) waveByte = 0;
                             else if (waveByte > 255) waveByte = 255;
-                            packet[8 + HALF_FFT + i] = (byte)waveByte;
+                            packet[OFF_TIME + i] = (byte)waveByte;
                         }
 
-                        FftInPlace(re, im);
+                        // Pack 256-sample stereo L/R waveforms from the latest 1024 samples (~21ms window)
+                        int recentStart = (ringPos + (FFT_SIZE - 1024)) & (FFT_SIZE - 1);
+                        for (int i = 0; i < STEREO_BINS; i++)
+                        {
+                            int idx = (recentStart + i * 4) & (FFT_SIZE - 1);
+                            int bL = (int)Math.Round(128.0 + ringL[idx] * 127.0);
+                            int bR = (int)Math.Round(128.0 + ringR[idx] * 127.0);
+                            packet[OFF_L_TIME + i] = (byte)(bL < 0 ? 0 : (bL > 255 ? 255 : bL));
+                            packet[OFF_R_TIME + i] = (byte)(bR < 0 ? 0 : (bR > 255 ? 255 : bR));
+                        }
 
-                        // Scale to match AnalyserNode dB mapping (-92 dB .. -12 dB, smoothing = 0.52)
+                        double rmsL = Math.Sqrt(sumL2 / FFT_SIZE);
+                        double rmsR = Math.Sqrt(sumR2 / FFT_SIZE);
+                        double rmsMid = Math.Sqrt(sumMid2 / FFT_SIZE);
+                        double rmsSide = Math.Sqrt(sumSide2 / FFT_SIZE);
+                        double targetWidth = (rmsMid + rmsSide > 0.0004)
+                            ? Math.Min(1.0, (rmsSide / (rmsMid + rmsSide * 0.45 + 1e-6)) * 1.45)
+                            : 0.0;
+                        double targetBalance = (rmsL + rmsR > 0.0004)
+                            ? Math.Max(-1.0, Math.Min(1.0, (rmsR - rmsL) / (rmsL + rmsR + 1e-6)))
+                            : 0.0;
+                        smoothStereoWidth = smoothStereoWidth * 0.72 + targetWidth * 0.28;
+                        smoothStereoBalance = smoothStereoBalance * 0.72 + targetBalance * 0.28;
+
+                        byte[] widthBytes = BitConverter.GetBytes((float)smoothStereoWidth);
+                        byte[] balBytes = BitConverter.GetBytes((float)smoothStereoBalance);
+                        Buffer.BlockCopy(widthBytes, 0, packet, 8, 4);
+                        Buffer.BlockCopy(balBytes, 0, packet, 12, 4);
+
+                        FftInPlace(reL, imL);
+                        FftInPlace(reR, imR);
+
+                        // Scale to match AnalyserNode dB mapping (-92 dB .. -12 dB, smoothing = 0.48)
                         const double minDb = -92.0;
                         const double maxDb = -12.0;
                         const double invRange = 255.0 / (maxDb - minDb);
@@ -1166,13 +1279,38 @@ namespace WasapiTap
 
                         for (int i = 0; i < HALF_FFT; i++)
                         {
-                            double mag = Math.Sqrt(re[i] * re[i] + im[i] * im[i]) * norm;
-                            smoothMag[i] = smoothMag[i] * 0.52 + mag * 0.48;
+                            double mRe = 0.5 * (reL[i] + reR[i]);
+                            double mIm = 0.5 * (imL[i] + imR[i]);
+                            double magMid = Math.Sqrt(mRe * mRe + mIm * mIm) * norm;
+                            double magL = Math.Sqrt(reL[i] * reL[i] + imL[i] * imL[i]) * norm;
+                            double magR = Math.Sqrt(reR[i] * reR[i] + imR[i] * imR[i]) * norm;
+
+                            smoothMag[i] = smoothMag[i] * 0.48 + magMid * 0.52;
+                            smoothMagL[i] = smoothMagL[i] * 0.48 + magL * 0.52;
+                            smoothMagR[i] = smoothMagR[i] * 0.48 + magR * 0.52;
+
                             double db = smoothMag[i] > 1e-10 ? 20.0 * Math.Log10(smoothMag[i]) : minDb;
                             int b = (int)Math.Round((db - minDb) * invRange);
-                            if (b < 0) b = 0;
-                            else if (b > 255) b = 255;
-                            packet[8 + i] = (byte)b;
+                            packet[OFF_FREQ + i] = (byte)(b < 0 ? 0 : (b > 255 ? 255 : b));
+                        }
+
+                        // Pack 256 log-mapped stereo L & R frequency bins aligned with DSP (up to 16 kHz)
+                        double binHz = (double)sampleRate / FFT_SIZE;
+                        int maxStereoBin = Math.Min(HALF_FFT - 1, Math.Max(8, (int)Math.Floor(16000.0 / Math.Max(1.0, binHz))));
+                        for (int x = 0; x < STEREO_BINS; x++)
+                        {
+                            double u = (double)x / (STEREO_BINS - 1);
+                            int logIdx = (int)Math.Floor(Math.Pow(Math.Max(2, maxStereoBin), u));
+                            if (logIdx < 1) logIdx = 1;
+                            else if (logIdx > maxStereoBin) logIdx = maxStereoBin;
+
+                            double dbL = smoothMagL[logIdx] > 1e-10 ? 20.0 * Math.Log10(smoothMagL[logIdx]) : minDb;
+                            int bL = (int)Math.Round((dbL - minDb) * invRange);
+                            packet[OFF_L_FREQ + x] = (byte)(bL < 0 ? 0 : (bL > 255 ? 255 : bL));
+
+                            double dbR = smoothMagR[logIdx] > 1e-10 ? 20.0 * Math.Log10(smoothMagR[logIdx]) : minDb;
+                            int bR = (int)Math.Round((dbR - minDb) * invRange);
+                            packet[OFF_R_FREQ + x] = (byte)(bR < 0 ? 0 : (bR > 255 ? 255 : bR));
                         }
 
                         if (diagMode)
@@ -1181,8 +1319,14 @@ namespace WasapiTap
                             if (diagTicks >= 40)
                             {
                                 int maxFft = 0;
-                                for (int i = 1; i < HALF_FFT; i++) if (packet[8 + i] > maxFft) maxFft = packet[8 + i];
-                                Console.WriteLine("DIAG_RESULT packets=" + diagPackets + " peakSample=" + diagPeak.ToString("F4") + " maxFftByte=" + maxFft);
+                                for (int i = 1; i < HALF_FFT; i++) if (packet[OFF_FREQ + i] > maxFft) maxFft = packet[OFF_FREQ + i];
+                                Console.WriteLine(
+                                    "DIAG_RESULT packets=" + diagPackets +
+                                    " peakSample=" + diagPeak.ToString("F4") +
+                                    " maxFftByte=" + maxFft +
+                                    " stereoWidth=" + smoothStereoWidth.ToString("F3") +
+                                    " balance=" + smoothStereoBalance.ToString("F3")
+                                );
                                 return 0;
                             }
                         }
