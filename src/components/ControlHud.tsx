@@ -772,7 +772,7 @@ export function ControlHud({
                 </span>
               </div>
               <div className="shortcut-row">
-                <span>Switch Background Style (6 = Blank)</span>
+                <span>Switch Background Style (8 = Blank)</span>
                 <span className="kbd-group">
                   <kbd className="kbd">1</kbd>
                   <kbd className="kbd">2</kbd>
@@ -780,6 +780,8 @@ export function ControlHud({
                   <kbd className="kbd">4</kbd>
                   <kbd className="kbd">5</kbd>
                   <kbd className="kbd">6</kbd>
+                  <kbd className="kbd">7</kbd>
+                  <kbd className="kbd">8</kbd>
                 </span>
               </div>
               <div className="shortcut-row">

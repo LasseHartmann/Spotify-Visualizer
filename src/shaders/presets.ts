@@ -198,80 +198,144 @@ vec3 finalizeLedColor(vec3 col) {
 `;
 
 /**
- * 1. SOFT CLOUD — Dreamy Liquid-Motion Clouds
- * Silky domain-warped mist clouds that curl, stretch, and flow like slow liquid silk.
- * Only soft, velvety liquid breathing with the music — zero sudden flashes or extreme snaps.
+ * 1. LIQUID (Lightweight fallback if GPU lacks float FBOs; primary uses real FluidSimulator)
  */
-const SOFT_CLOUD_FRAG = `${COMMON_HEADER}
+const LIQUID_FRAG = `${COMMON_HEADER}
 void main() {
   vec2 uv = vUv;
   float aspect = uResolution.x / max(uResolution.y, 1.0);
   vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
-  float r = length(p);
+  vec3 primaryCol = getPrimaryColor();
+  vec3 accentCol = getAccentColor();
+  float t = uTime * 0.16 + uFlowTime * 0.25;
+  float n1 = noise2d(p * 2.2 + vec2(t, -t * 0.7));
+  float n2 = noise2d(p * 3.1 - vec2(t * 0.8, t) + n1 * 1.6);
+  vec3 col = uBackdrop * 0.65 + mixCoverColor(primaryCol, accentCol, n2) * (0.25 + uBass * 0.45 + uKick * 0.30) * smoothstep(0.25, 0.85, n2);
+  fragColor = vec4(finalizeLedColor(col), 1.0);
+}
+`;
+
+/**
+ * 2. WAVE — Layered Harmonic Ocean & Acoustic Ribbon Waves
+ * Five translucent glowing wave layers driven by live FFT spectrum, smoothed
+ * audio waveform, expanding outward kick crests, vocal counter-waves, and treble shimmer.
+ */
+const WAVE_FRAG = `${COMMON_HEADER}
+void main() {
+  vec2 uv = vUv;
+  float aspect = uResolution.x / max(uResolution.y, 1.0);
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
   vec3 tertiaryCol = getTertiaryColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.48);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.54);
+  vec3 foamCol = mix(accentCol, vec3(1.0), 0.30);
 
-  // Ultra-calm, silky audio modulation (strictly soft liquid swells, never frantic)
-  float gentleBass = clamp(uBass * 0.55 + uSubBass * 0.30, 0.0, 0.72);
-  float gentleVocal = clamp(uVocal * 0.65 + uLowMid * 0.25, 0.0, 0.75);
-  float softKick = clamp(uKick * 0.30, 0.0, 0.32);
+  float punch = clamp(uPulse, 0.55, 1.4);
+  float kickHit = clamp(uKick * punch, 0.0, 1.0);
+  float snareHit = clamp(uSnare * punch, 0.0, 0.95);
+  float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
+  float flow = uFlowTime * 0.95;
 
-  // Slow continuous liquid drift (advected smoothly by calm uFlowTime + wall clock)
-  float t = uTime * 0.065 + uFlowTime * 0.095;
-  vec2 sp = p * (1.0 - gentleBass * 0.025);
-
-  // Triple-pass fluid domain warping: clouds curl, fold, and pour like slow-motion liquid silk
-  vec2 q = vec2(
-    fbm(sp * 1.15 + vec2(t * 0.45, -t * 0.28)),
-    fbm(sp * 1.15 + vec2(-t * 0.32, t * 0.38) + vec2(4.2, 1.7))
+  // Smooth multi-tap FFT across horizontal axis (bass center -> highs edges, rounded smoothly at center)
+  float symX = smoothstep(0.0, 1.0, abs(uv.x - 0.5) * 2.0);
+  float freqX = pow(symX, 0.88) * 0.84 + 0.02;
+  float fft = (
+    sampleFFT(freqX - 0.032) * 0.16 +
+    sampleFFT(freqX - 0.015) * 0.22 +
+    sampleFFT(freqX) * 0.28 +
+    sampleFFT(freqX + 0.015) * 0.20 +
+    sampleFFT(freqX + 0.032) * 0.14
   );
-  vec2 w = vec2(
-    fbm(sp * 1.45 + q * (1.35 + gentleBass * 0.32) + vec2(t * 0.30, t * 0.22) + vec2(1.9, 6.4)),
-    fbm(sp * 1.45 + q * (1.35 + gentleBass * 0.32) + vec2(-t * 0.25, -t * 0.30) + vec2(7.3, 2.8))
+
+  // Lightly smoothed phase-locked live audio waveform for fluid acoustic crests
+  float liveWave = (
+    sampleWave(uv.x - 0.012) * 0.18 +
+    sampleWave(uv.x - 0.005) * 0.24 +
+    sampleWave(uv.x) * 0.32 +
+    sampleWave(uv.x + 0.005) * 0.16 +
+    sampleWave(uv.x + 0.012) * 0.10
   );
-  float liquidCloud = fbm5(sp * 1.35 + w * (1.15 + gentleBass * 0.28) + vec2(t * 0.16, -t * 0.10));
 
-  // Soft volumetric directional shimmer inside the liquid folds
-  float litSample = fbm(sp * 1.35 + w * (1.15 + gentleBass * 0.28) + vec2(t * 0.16 + 0.08, -t * 0.10 + 0.10));
-  float softFold = clamp((liquidCloud - litSample) * 2.4 + 0.52, 0.0, 1.0);
+  // Expanding horizontal kick crest sweeping outward from center
+  float kickCrestWave = exp(-abs(symX - uKickWave * 1.15) * 7.0) *
+                        (1.0 - smoothstep(0.55, 1.15, uKickWave)) * uKickWaveAmp;
 
-  // Smooth velvety cloud billows & delicate swirling current ribbons
-  float cloudBody = smoothstep(mix(0.24, 0.38, uDarkStage), 0.88, liquidCloud);
-  float swirlRibbon = pow(clamp(1.0 - abs(liquidCloud * 2.0 - 1.0), 0.0, 1.0), 2.8);
-  float warpMix = clamp(length(w - 0.5) * 1.45, 0.0, 1.0);
+  // Atmospheric twilight sky gradient above lowered ocean waves
+  float bgScale = mix(1.0, 0.18, uDarkStage);
+  vec3 col = uBackdrop + deepTint * (0.06 + (1.0 - uv.y) * 0.15 + uEnergy * 0.10) * bgScale;
+  col += primaryCol * exp(-abs(uv.y - 0.36) * 3.8) * (0.08 + bassPower * 0.16 + kickHit * 0.16) * bgScale;
 
-  // Deep calm liquid sky backdrop
-  float bgScale = mix(1.0, 0.12, uDarkStage);
-  vec3 col = uBackdrop + deepTint * (0.07 + uEnergy * 0.08 + softKick * 0.07) * bgScale;
+  // LAYER 1 (Back): Sub-Bass Horizon Ocean Swell
+  float swell1 = 0.38
+    + sin(uv.x * 3.8 + flow * 0.55) * (0.040 + bassPower * 0.048)
+    + cos(uv.x * 2.1 - flow * 0.35) * 0.026
+    + (fft - 0.25) * (0.16 + bassPower * 0.11)
+    + kickHit * 0.048;
+  float fill1 = smoothstep(swell1 + 0.02, swell1 - 0.015, uv.y) * exp(-max(swell1 - uv.y, 0.0) * 2.8);
+  float rim1 = exp(-abs(uv.y - swell1) * 42.0);
+  col += deepTint * fill1 * (0.36 + bassPower * 0.42);
+  col += primaryCol * rim1 * (0.26 + fft * 0.48 + kickHit * 0.26);
 
-  // Flowing primary liquid cloud masses
-  vec3 liquidHue = mixCoverColor(primaryCol, accentCol, warpMix * 0.48 + softFold * 0.22);
-  float bodyGlow = cloudBody * (0.24 + gentleBass * 0.28 + softKick * 0.14 + uEnergy * 0.12);
-  col += liquidHue * bodyGlow;
+  // LAYER 2 (Mid-Back): Live FFT Spectrum Translucent Ocean Sheet
+  float swell2 = 0.32
+    + sin(uv.x * 5.6 - flow * 0.78 + 1.2) * (0.034 + uLowMid * 0.040)
+    + fft * (0.18 + uEnergy * 0.10) * (1.0 - symX * 0.25)
+    + kickCrestWave * 0.075;
+  float fill2 = smoothstep(swell2 + 0.016, swell2 - 0.012, uv.y) * exp(-max(swell2 - uv.y, 0.0) * 3.8);
+  float rim2 = exp(-abs(uv.y - swell2) * 58.0);
+  vec3 sheet2Col = mixCoverColor(primaryCol, accentCol, 0.35 + fft * 0.35);
+  col += sheet2Col * fill2 * (0.28 + fft * 0.48 + kickHit * 0.22);
+  col += sheet2Col * rim2 * (0.45 + fft * 0.65 + kickCrestWave * 0.55);
 
-  // Soft swirling vocal & melody eddies drifting inside the cloud currents
-  vec3 eddyCol = mixCoverColor(accentCol, tertiaryCol, 0.35);
-  col += eddyCol * swirlRibbon * (0.14 + gentleVocal * 0.28 + uTreble * 0.12) * mix(1.0, 0.72, uDarkStage);
+  // LAYER 3 (Mid): Vocal Harmonic Counter-Wave Ribbon
+  float vocalAmp = 0.068 + uVocal * 0.082 + snareHit * 0.045;
+  float swell3 = 0.35
+    - liveWave * (vocalAmp * 0.55)
+    + sin(uv.x * 7.4 + flow * 1.15) * (0.022 + uVocal * 0.040)
+    + cos(uv.x * 4.0 - flow * 0.6) * 0.018;
+  float fill3 = smoothstep(swell3 + 0.012, swell3 - 0.012, uv.y) * exp(-max(swell3 - uv.y, 0.0) * 5.2);
+  float rim3 = exp(-abs(uv.y - swell3) * 76.0);
+  float glow3 = exp(-abs(uv.y - swell3) * 16.0);
+  col += accentCol * fill3 * (0.16 + uVocal * 0.34);
+  col += accentCol * (rim3 * (0.58 + uVocal * 0.65 + snareHit * 0.55) + glow3 * (0.16 + uVocal * 0.28));
 
-  // Subtle pearlescent crest highlights along the softest liquid folds
-  float crest = smoothstep(0.60, 0.94, liquidCloud) * softFold;
-  col += mix(primaryCol, vec3(1.0), 0.22) * crest * (0.12 + gentleBass * 0.14 + gentleVocal * 0.14);
+  // LAYER 4 (Foreground Hero): Crisp Live Acoustic Waveform Crest + Caustic Underwater Glow
+  float heroAmp = 0.10 + bassPower * 0.078 + kickHit * 0.055 + uDrop * 0.042;
+  float trebleRipple = sin(uv.x * 36.0 - flow * 3.6) * (uTreble * 0.010 + uHiHat * 0.015);
+  float heroY = 0.32
+    + liveWave * heroAmp
+    + sin(uv.x * 4.8 + flow * 0.85) * 0.020
+    + kickCrestWave * 0.052
+    + trebleRipple;
+  float dHero = abs(uv.y - heroY);
+  float heroBody = smoothstep(heroY + 0.010, heroY - 0.008, uv.y) * exp(-max(heroY - uv.y, 0.0) * 4.2);
+  float heroCore = exp(-dHero * (105.0 - kickHit * 24.0));
+  float heroHalo = exp(-dHero * 16.0) * (0.28 + uEnergy * 0.36 + kickHit * 0.34);
 
-  // Gentle breathing perimeter aura for smooth LED screen backlights
-  col += primaryCol * smoothstep(0.55, 1.25, r) * (0.04 + gentleBass * 0.10 + softKick * 0.09) * mix(1.0, 0.55, uDarkStage);
+  col += mixCoverColor(primaryCol, tertiaryCol, 0.3) * heroBody * (0.24 + bassPower * 0.44 + kickHit * 0.28);
+  col += primaryCol * heroHalo;
+  col += mix(primaryCol, foamCol, 0.52 + uHiHat * 0.35) * heroCore * (0.85 + kickHit * 0.42 + uHiHat * 0.35);
+
+  // LAYER 5 (Subtle Mirrored Sky Wave Reflection for Balanced Depth)
+  float mirrorY = 0.50 + fft * 0.11 - liveWave * (heroAmp * 0.28) + cos(uv.x * 5.2 - flow * 0.7) * 0.016;
+  float dMirror = abs(uv.y - mirrorY);
+  float mirrorRibbon = exp(-dMirror * 68.0) * (0.22 + uVocal * 0.36 + uTreble * 0.30);
+  float mirrorGlow = exp(-dMirror * 15.0) * (0.08 + fft * 0.18);
+  col += mixCoverColor(accentCol, primaryCol, 0.4) * (mirrorRibbon + mirrorGlow);
+
+  // Soft bottom reflection shimmer & perimeter kick swell
+  float edgeGlow = smoothstep(0.32, 0.50, abs(uv.y - 0.5));
+  col += primaryCol * edgeGlow * (kickHit * 0.22 + bassPower * 0.12);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
 `;
 
 /**
- * 2. CLOUD — Real Sculpted Fluffy Cumulus Clouds in an Audio-Reactive Sky
- * Recognizable flat-bottomed, billowy cumulus clouds drifting across a twilight sky.
- * Individual cloud lobes puff & swell smoothly with bass/mid/treble bands, kicks glow
- * warmly through the dense cloud cores, and vocals/snares gild the sunlit silver linings.
+ * 3. CLOUD — Fast, Clean Sky Filled with Fluffy Cumulus Clouds Only
+ * Zero circles, zero rings, zero star dots — pure endlessly-tiled drifting cumulus clouds
+ * with bounding-box early-outs for buttery 60 FPS performance on laptops.
  */
 const CLOUD_FRAG = `${COMMON_HEADER}
 float smin(float a, float b, float k) {
@@ -283,203 +347,181 @@ float smax(float a, float b, float k) {
   return -smin(-a, -b, k);
 }
 
-// Sculpted puffy cumulus cloud SDF: distinct plump rounded cloud domes + soft flat underside + cotton edge
-float cumulusSdf(vec2 q, float bL, float bC, float bR, float kickPump, float seed) {
-  float k = 0.028; // Tighter blend keeps each rounded cumulus puff lobe distinct & cloud-shaped!
-  float lift = kickPump * 0.020;
-
-  // Classic iconic cumulus cloud profile: wide flat-ish base + plump round domes rising in center & shoulders
-  float d = length(q - vec2(-0.02, 0.068 + bC * 0.046 + lift)) - (0.098 + bC * 0.028 + kickPump * 0.016);
-  d = smin(d, length(q - vec2( 0.088, 0.052 + bR * 0.038 + lift * 0.9)) - (0.082 + bR * 0.024 + kickPump * 0.013), k);
-  d = smin(d, length(q - vec2(-0.128, 0.034 + bL * 0.036 + lift * 0.85)) - (0.078 + bL * 0.024 + kickPump * 0.012), k);
-  d = smin(d, length(q - vec2(-0.215, 0.000 + bL * 0.018)) - (0.056 + bL * 0.016 + kickPump * 0.008), k);
-  d = smin(d, length(q - vec2( 0.185, 0.004 + bR * 0.020)) - (0.060 + bR * 0.016 + kickPump * 0.009), k);
-  d = smin(d, length(q - vec2( 0.258, -0.014 + bR * 0.012)) - (0.042 + bR * 0.011), k);
-  d = smin(d, length(q - vec2(-0.280, -0.016 + bL * 0.012)) - (0.040 + bL * 0.010), k);
-  // Base body bridge so the underside is continuous & plump
-  d = smin(d, length(q - vec2( 0.00, -0.008)) - (0.082 + bC * 0.015), 0.045);
-
-  // Softly flatten the bottom underside so it unmistakably reads as a floating cumulus cloud
-  d = smax(d, -0.046 - q.y, 0.026);
-
-  // Delicate fluffy cotton-edge wispiness (keeps domes super round & recognizable)
-  float edgeNoise = (fbm(q * 9.0 + vec2(seed, -seed * 0.6)) - 0.5) * 0.026;
-  return d + edgeNoise;
+// Fast 2-octave cloud fluff noise (3x cheaper than 4-octave fbm, silky smooth!)
+float cloudNoise2(vec2 p) {
+  return noise2d(p) * 0.67 + noise2d(p * 2.05 + vec2(7.3, 4.1)) * 0.33;
 }
 
-vec3 compositeCumulus(
-  vec3 bg,
-  vec2 q,
-  float bL,
-  float bC,
-  float bR,
-  float kickPump,
-  float internalGlow,
-  float rimPower,
+// Lightweight cumulus cloud SDF with rounded overlapping domes + flat underside
+float fastCumulusSdf(vec2 q, float bL, float bC, float bR, float kickPump, float seed) {
+  float k = 0.028;
+  float lift = kickPump * 0.018;
+
+  float d = length(q - vec2(-0.02, 0.064 + bC * 0.042 + lift)) - (0.095 + bC * 0.024 + kickPump * 0.014);
+  d = smin(d, length(q - vec2( 0.086, 0.048 + bR * 0.034 + lift * 0.85)) - (0.080 + bR * 0.020 + kickPump * 0.011), k);
+  d = smin(d, length(q - vec2(-0.125, 0.032 + bL * 0.032 + lift * 0.85)) - (0.076 + bL * 0.020 + kickPump * 0.011), k);
+  d = smin(d, length(q - vec2(-0.208, -0.002 + bL * 0.016)) - (0.054 + bL * 0.014), k);
+  d = smin(d, length(q - vec2( 0.180,  0.002 + bR * 0.016)) - (0.058 + bR * 0.014), k);
+  d = smin(d, length(q - vec2( 0.00,  -0.008)) - (0.080 + bC * 0.012), 0.042);
+
+  // Soft flat cloud bottom
+  d = smax(d, -0.044 - q.y, 0.024);
+
+  // Fast 2-octave cotton-edge billow detail
+  float edgeFluff = (cloudNoise2(q * 8.2 + vec2(seed, -seed * 0.5)) - 0.5) * 0.028;
+  return d + edgeFluff;
+}
+
+// Renders one infinite horizontal row of evenly-spaced drifting cumulus clouds in O(1) cost!
+vec3 renderCloudRow(
+  vec3 col,
+  vec2 p,
+  float rowY,
+  float tileW,
+  float rowSpeed,
+  float baseScale,
+  float rowSeed,
   float opacity,
-  float seed,
+  float fSub,
+  float fMid,
+  float fVoc,
+  float fHi,
+  float kickHit,
+  float rimEnergy,
   vec3 bellyCol,
   vec3 bodyCol,
   vec3 crownCol,
   vec3 rimCol
 ) {
-  float d = cumulusSdf(q, bL, bC, bR, kickPump, seed);
-  // Soft backlit atmospheric halo hugging the cloud silhouette
-  float halo = exp(-max(d, 0.0) * 20.0) * (0.14 + internalGlow * 0.30 + rimPower * 0.22) * opacity;
-  vec3 res = bg + rimCol * halo;
+  // Fast vertical row culling: skip pixels far outside this cloud row immediately!
+  if (abs(p.y - rowY) > 0.30 * baseScale + 0.08) return col;
+
+  float shiftedX = p.x - rowSpeed;
+  float cellId = floor(shiftedX / tileW);
+  float localX = shiftedX - (cellId + 0.5) * tileW;
+
+  // Per-cloud organic variation (position jitter, scale, fluff seed) so every cloud feels unique
+  float r1 = hash21(vec2(cellId, rowSeed));
+  float r2 = hash21(vec2(cellId + 19.7, rowSeed + 3.1));
+  float r3 = hash21(vec2(cellId + 41.3, rowSeed + 7.7));
+
+  float jitterX = (r1 - 0.5) * (tileW * 0.16);
+  float jitterY = (r2 - 0.5) * 0.09;
+  float cScale = baseScale * (0.86 + r3 * 0.26);
+
+  vec2 q = vec2(localX - jitterX, p.y - (rowY + jitterY)) / cScale;
+
+  // Fast tight bounding-box early-out before ANY SDF or noise work!
+  if (abs(q.x) > 0.45 || q.y < -0.17 || q.y > 0.31) return col;
+
+  // Assign distinct musical frequency sensitivity across neighboring clouds
+  float bL = mix(fSub, fMid, r1);
+  float bC = mix(fMid, fVoc, r2);
+  float bR = mix(fVoc, fHi, r3);
+
+  float d = fastCumulusSdf(q, bL, bC, bR, kickHit, rowSeed * 13.0 + cellId * 5.7);
+
+  // Smoothly taper outer cloud halo to zero well inside the bounding box (zero rectangular seam!)
+  float haloFade =
+    smoothstep(0.45, 0.33, abs(q.x)) *
+    smoothstep(-0.17, -0.07, q.y) *
+    smoothstep(0.31, 0.20, q.y);
+  float halo = exp(-max(d, 0.0) * 26.0) * (0.09 + kickHit * 0.20 + rimEnergy * 0.14) * opacity * haloFade;
+  vec3 outCol = col + rimCol * halo;
 
   float mask = smoothstep(0.014, -0.010, d);
-  if (mask <= 0.001) return res;
+  if (mask <= 0.001) return outCol;
 
-  // Authentic 3D cumulus lighting: bright sunlit upper puffs, fluffy internal folds, softly shaded underside
-  float dSun = cumulusSdf(q + vec2(-0.016, 0.042), bL, bC, bR, kickPump, seed);
-  float topLight = clamp((dSun - d) * 12.0 + 0.50, 0.0, 1.0);
-  float bellyGrad = smoothstep(-0.050, 0.085, q.y);
-  float folds = fbm(q * 9.5 + vec2(seed * 1.7, 3.1));
-  float shadeT = clamp(topLight * 0.54 + bellyGrad * 0.34 + (folds - 0.46) * 0.24, 0.0, 1.0);
+  // Ultra-fast analytical 3D cloud volume shading (no second SDF pass!)
+  float bellyToCrown = smoothstep(-0.048, 0.125, q.y);
+  float innerDepth = smoothstep(0.0, -0.068, d);
+  float puffTex = cloudNoise2(q * 10.5 + vec2(cellId * 3.1, rowSeed));
+  float shadeT = clamp(bellyToCrown * 0.72 + (1.0 - innerDepth) * 0.16 + (puffTex - 0.48) * 0.24, 0.0, 1.0);
 
-  vec3 cloudCol = mix(bellyCol, bodyCol, smoothstep(0.06, 0.56, shadeT));
-  cloudCol = mix(cloudCol, crownCol, smoothstep(0.50, 0.94, shadeT));
+  vec3 cCol = mix(bellyCol, bodyCol, smoothstep(0.05, 0.54, shadeT));
+  cCol = mix(cCol, crownCol, smoothstep(0.48, 0.94, shadeT));
 
-  // Warm internal beat glow shining through the dense center of the cloud
-  float coreDepth = smoothstep(0.0, -0.068, d);
-  cloudCol += rimCol * coreDepth * internalGlow * 0.42;
+  // Gentle internal cloud brightening on kicks + backlit silver-lining rim on vocals/snares
+  cCol += rimCol * innerDepth * (kickHit * 0.36 + bC * 0.14);
+  float rim = exp(-abs(d) * 76.0) * smoothstep(-0.025, 0.065, q.y);
+  cCol += rimCol * rim * (0.30 + rimEnergy * 0.55);
 
-  // Crisp backlit silver-lining rim around upper cumulus puffs
-  float rim = exp(-abs(d) * 76.0) * smoothstep(-0.030, 0.070, q.y);
-  cloudCol += rimCol * rim * (0.36 + rimPower * 0.65);
-
-  return mix(res, cloudCol, mask * opacity);
+  return mix(outCol, cCol, mask * opacity);
 }
 
 void main() {
   vec2 uv = vUv;
   float aspect = uResolution.x / max(uResolution.y, 1.0);
   vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
-  float r = length(p);
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
   vec3 deepTint = preserveShade(primaryCol, -0.02, 0.38);
-  vec3 highlightCol = mix(accentCol, vec3(1.0), 0.48);
+  vec3 highlightCol = mix(accentCol, vec3(1.0), 0.44);
 
-  float punch = clamp(uPulse, 0.55, 1.35);
+  float punch = clamp(uPulse, 0.55, 1.30);
   float kickHit = clamp(uKick * punch, 0.0, 1.0);
-  float snareHit = clamp(uSnare * punch, 0.0, 0.95);
-  float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
+  float snareHit = clamp(uSnare * punch, 0.0, 0.90);
+  float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.15);
 
-  // Live smooth frequency bands for organic puff swells
-  float fSub = (sampleFFT(0.03) + sampleFFT(0.07) + sampleFFT(0.11)) / 3.0;
-  float fMid = (sampleFFT(0.24) + sampleFFT(0.32) + sampleFFT(0.40)) / 3.0;
-  float fVoc = (sampleFFT(0.45) + sampleFFT(0.55) + sampleFFT(0.64)) / 3.0;
-  float fHi  = (sampleFFT(0.72) + sampleFFT(0.80) + sampleFFT(0.88)) / 3.0;
+  // Smooth live frequency bands driving organic cloud puff swells
+  float fSub = (sampleFFT(0.04) + sampleFFT(0.09)) * 0.5;
+  float fMid = (sampleFFT(0.26) + sampleFFT(0.36)) * 0.5;
+  float fVoc = (sampleFFT(0.48) + sampleFFT(0.60)) * 0.5;
+  float fHi  = (sampleFFT(0.74) + sampleFFT(0.84)) * 0.5;
 
-  // Deep starry twilight sky gradient (lots of breathing room so every cloud silhouette pops!)
-  float bgScale = mix(1.0, 0.22, uDarkStage);
-  vec3 skyTop = uBackdrop * 0.50 + deepTint * (0.05 + uEnergy * 0.05) * bgScale;
-  vec3 skyHorizon = uBackdrop * 0.72 + mix(deepTint, primaryCol, 0.30) * (0.14 + bassPower * 0.14) * bgScale;
-  vec3 col = mix(skyHorizon, skyTop, smoothstep(0.02, 0.96, uv.y));
+  // Clean pure twilight sky gradient — zero circles, zero stars, zero rings
+  float bgScale = mix(1.0, 0.20, uDarkStage);
+  vec3 skyTop = uBackdrop * 0.52 + deepTint * (0.05 + uEnergy * 0.05) * bgScale;
+  vec3 skyBottom = uBackdrop * 0.74 + mix(deepTint, primaryCol, 0.28) * (0.14 + bassPower * 0.14) * bgScale;
+  vec3 col = mix(skyBottom, skyTop, smoothstep(0.0, 1.0, uv.y));
 
-  // Soft moon/sun glow behind the clouds pulsing with kicks & bass
-  vec2 sunPos = vec2(0.0, -0.06);
-  float sunDist = length(p - sunPos);
-  float kickShock = exp(-abs(sunDist - uKickWave * 1.35) * 6.5) *
-                    (1.0 - smoothstep(0.45, 1.15, uKickWave)) * uKickWaveAmp;
-  col += primaryCol * exp(-sunDist * sunDist * 2.0) * (0.12 + bassPower * 0.20 + kickHit * 0.20) * bgScale;
-  col += mixCoverColor(primaryCol, highlightCol, 0.4) * kickShock * 0.20;
-
-  // Twinkling sky stars above & between the clouds sparkling on hi-hats & treble
-  vec2 starCell = floor(p * 28.0);
-  vec2 starLocal = fract(p * 28.0) - 0.5;
-  float starRnd = hash21(starCell);
-  if (starRnd > 0.94 && uv.y > 0.25) {
-    float twinkle = 0.45 + 0.55 * sin(uTime * (2.4 + starRnd * 5.0) + starRnd * 31.0);
-    float starDot = exp(-length(starLocal) * 15.0) * twinkle * (0.20 + uTreble * 0.45 + uHiHat * 0.75);
-    col += highlightCol * starDot;
-  }
-
-  // Dreamy 3D cloud colors (rich shaded belly, luminous album mid-body, sunlit pastel crown)
-  vec3 bellyDark = mix(uBackdrop * 0.62, deepTint * 0.60, 0.62);
+  // Cloud color tiers faithful to album palette
+  vec3 bellyDark = mix(uBackdrop * 0.62, deepTint * 0.58, 0.62);
   vec3 bodyMid = mixCoverColor(deepTint, primaryCol, 0.72) * (0.58 + uEnergy * 0.20);
-  vec3 crownLit = mixCoverColor(primaryCol, highlightCol, 0.44) * (0.80 + bassPower * 0.16);
-  vec3 rimGlow = mixCoverColor(accentCol, vec3(1.0), 0.42);
+  vec3 crownLit = mixCoverColor(primaryCol, highlightCol, 0.44) * (0.82 + bassPower * 0.16);
+  vec3 rimGlow = mixCoverColor(accentCol, vec3(1.0), 0.40);
 
-  float drift = uFlowTime * 0.055;
-  float wrapSpan = max(aspect + 1.05, 2.25);
-  float internalFlash = kickHit * 0.80 + kickShock * 0.70 + bassPower * 0.20;
-  float rimEnergy = uVocal * 0.65 + snareHit * 0.75 + uDrop * 0.22;
+  float drift = uTime * 0.030 + uFlowTime * 0.042;
+  float rimEnergy = uVocal * 0.65 + snareHit * 0.70 + uDrop * 0.20;
 
-  // LAYER 1: Small distant high clouds drifting gently across the upper starry sky
-  {
-    float x1 = mod(p.x - drift * 0.48 + 0.46 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
-    vec2 q1 = vec2(x1, p.y - 0.28) / 0.58;
-    col = compositeCumulus(
-      col, q1, fSub * 0.6, fMid * 0.75, fHi * 0.65, kickHit * 0.45,
-      internalFlash * 0.40, rimEnergy * 0.50, 0.58, 1.3,
-      bellyDark, bodyMid * 0.82, crownLit * 0.82, rimGlow
-    );
+  // 4 staggered infinite tiled rows so the sky ALWAYS has plenty of distinct fluffy clouds!
+  // Row 1: Distant high sky clouds
+  col = renderCloudRow(
+    col, p, 0.33, 0.72, drift * 0.45, 0.54, 1.0, 0.58,
+    fSub * 0.7, fMid * 0.8, fVoc * 0.8, fHi * 0.8, kickHit * 0.55, rimEnergy * 0.55,
+    bellyDark, bodyMid * 0.82, crownLit * 0.82, rimGlow
+  );
 
-    float x2 = mod(p.x - drift * 0.36 - 0.58 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
-    vec2 q2 = vec2(x2, p.y - 0.25) / 0.52;
-    col = compositeCumulus(
-      col, q2, fMid * 0.6, fVoc * 0.8, fHi * 0.7, kickHit * 0.40,
-      internalFlash * 0.40, rimEnergy * 0.50, 0.52, 4.7,
-      bellyDark, bodyMid * 0.82, crownLit * 0.82, rimGlow
-    );
-  }
+  // Row 2: Upper-mid drifting clouds (staggered phase)
+  col = renderCloudRow(
+    col, p, 0.14, 0.82, drift * 0.75 + 0.41, 0.74, 2.0, 0.82,
+    fSub * 0.85, fMid, fVoc, fHi, kickHit * 0.80, rimEnergy * 0.85,
+    bellyDark, bodyMid * 0.94, crownLit * 0.95, rimGlow
+  );
 
-  // LAYER 2: Distinct floating hero cumulus clouds framing the sky cleanly around the lyrics
-  {
-    // Left hero cloud (bass-driven puffs)
-    float xL = mod(p.x - drift * 0.85 + 0.56 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
-    vec2 qL = vec2(xL, p.y - 0.06) / 0.82;
-    col = compositeCumulus(
-      col, qL, fSub, fMid, fVoc, kickHit * 0.90,
-      internalFlash * 0.78, rimEnergy * 0.85, 0.88, 8.2,
-      bellyDark, bodyMid, crownLit, rimGlow
-    );
+  // Row 3: Lower-mid hero clouds framing beneath the lyrics
+  col = renderCloudRow(
+    col, p, -0.14, 0.86, drift * 1.05 + 0.18, 0.84, 3.0, 0.92,
+    fSub, fMid, fVoc, fHi, kickHit * 0.95, rimEnergy,
+    bellyDark * 0.94, bodyMid, crownLit * 1.04, rimGlow
+  );
 
-    // Right hero cloud (vocal & treble puffs)
-    float xR = mod(p.x - drift * 0.74 - 0.58 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
-    vec2 qR = vec2(xR, p.y - 0.11) / 0.78;
-    col = compositeCumulus(
-      col, qR, fMid, fVoc, fHi, kickHit * 0.82,
-      internalFlash * 0.75, rimEnergy * 0.92, 0.86, 13.5,
-      bellyDark, bodyMid, crownLit, rimGlow
-    );
-
-    // Hero lower-center cumulus cloud floating prominently beneath the lyrics!
-    float xC = mod(p.x - drift * 1.05 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
-    vec2 qC = vec2(xC, p.y + 0.26) / 0.98;
-    col = compositeCumulus(
-      col, qC, fSub, max(fSub * 0.65, fVoc), fHi, kickHit,
-      internalFlash * 0.95, rimEnergy, 0.95, 21.4,
-      bellyDark * 0.95, bodyMid * 1.02, crownLit * 1.04, rimGlow
-    );
-  }
-
-  // LAYER 3: Smaller drifting foreground clouds near bottom corners for parallax depth
-  {
-    float xB1 = mod(p.x - drift * 1.35 + 0.78 + wrapSpan * 0.5, wrapSpan) - wrapSpan * 0.5;
-    vec2 qB1 = vec2(xB1, p.y + 0.37) / 0.88;
-    col = compositeCumulus(
-      col, qB1, fSub, fMid, fVoc, kickHit * 0.95,
-      internalFlash * 0.70, rimEnergy * 0.72, 0.90, 29.1,
-      bellyDark * 0.88, bodyMid * 0.92, crownLit * 0.95, rimGlow
-    );
-  }
-
-  // Gentle edge backlight breath for screen-average LEDs
-  col += primaryCol * smoothstep(0.68, 1.30, r) * (kickHit * 0.14 + bassPower * 0.08);
+  // Row 4: Foreground low clouds drifting along the bottom edge
+  col = renderCloudRow(
+    col, p, -0.35, 0.90, drift * 1.35 + 0.56, 0.92, 4.0, 0.95,
+    fSub, fMid, fVoc, fHi, kickHit, rimEnergy * 0.80,
+    bellyDark * 0.86, bodyMid * 0.92, crownLit * 0.96, rimGlow
+  );
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
 `;
 
 /**
- * 2. BARS — Bottom-Anchored Vertical Spectrum Equalizer Bars with Falling Peak-Hold Caps
- * Clean musical left-to-right (bass -> vocal -> treble) rounded vertical bars rising from
- * the bottom edge, topped by classic hardware-EQ gravity peak caps.
+ * 3. BARS — Rough, Raw, Edge-to-Edge Bottom-Up Segmented Spectrum Bars
+ * Flush from left pixel 0 to right edge and bottom edge, raw un-blurred per-bar FFT spikes,
+ * crisp flat-top segmented LED-block texture, and sharp falling peak-hold caps.
  */
 const BARS_FRAG = `${COMMON_HEADER}
 void main() {
@@ -488,103 +530,78 @@ void main() {
 
   vec3 primaryCol = getPrimaryColor();
   vec3 accentCol = getAccentColor();
-  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.52);
-  vec3 capCol = mix(accentCol, vec3(1.0), 0.52);
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.48);
+  vec3 capCol = mix(accentCol, vec3(1.0), 0.58);
 
   float punch = clamp(uPulse, 0.55, 1.35);
   float kickHit = clamp(uKick * punch, 0.0, 1.0);
   float snareHit = clamp(uSnare * punch, 0.0, 0.95);
   float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
 
-  // Clean dark stage leaving the upper-middle crisp for lyrics
-  float bgScale = mix(1.0, 0.18, uDarkStage);
-  vec3 col = uBackdrop * 0.82 + deepTint * (0.05 + (1.0 - uv.y) * 0.10 + uEnergy * 0.08) * bgScale;
+  // Clean raw dark backdrop
+  float bgScale = mix(1.0, 0.16, uDarkStage);
+  vec3 col = uBackdrop * 0.80 + deepTint * (0.04 + (1.0 - uv.y) * 0.09 + uEnergy * 0.07) * bgScale;
 
-  // Aspect-responsive bar count (~53 sleek bars on desktop, ~20 wide readable bars on mobile portrait)
-  float numBars = clamp(floor(aspect * 30.0), 20.0, 56.0);
-  float padX = 0.035;
-  float innerX = (uv.x - padX) / (1.0 - padX * 2.0);
-  float inBounds = step(0.0, innerX) * step(innerX, 1.0);
-
-  float barSlot = innerX * numBars;
+  // Edge-to-edge full-width bars (zero left/right/bottom margins!)
+  float numBars = clamp(floor(aspect * 38.0), 24.0, 68.0);
+  float barSlot = uv.x * numBars;
   float barIdx = clamp(floor(barSlot), 0.0, numBars - 1.0);
-  float barLocalX = fract(barSlot) - 0.5; // -0.5 .. +0.5 within bar column
-  float barNorm = (barIdx + 0.5) / numBars; // 0 (sub-bass left) -> 1 (treble right)
+  float barLocalX = fract(barSlot) - 0.5;
+  float barNorm = (barIdx + 0.5) / numBars;
 
-  // Left-to-right musical frequency spectrum (log-packed in row 0, gravity peak-hold in row 2)
-  float freqPos = pow(barNorm, 0.94) * 0.90 + 0.012;
-  float fft = (
-    sampleFFT(freqPos - 0.008) * 0.22 +
-    sampleFFT(freqPos) * 0.56 +
-    sampleFFT(freqPos + 0.008) * 0.22
-  );
-  float peakFft = max(
-    fft,
-    samplePeak(freqPos - 0.008) * 0.20 +
-    samplePeak(freqPos) * 0.60 +
-    samplePeak(freqPos + 0.008) * 0.20
-  );
+  // Raw, direct per-bar FFT sampling (no neighbor blur -> sharp jagged rough frequency spikes!)
+  float freqPos = pow(barNorm, 0.92) * 0.90 + 0.012;
+  float fft = sampleFFT(freqPos);
+  float peakFft = max(fft, samplePeak(freqPos));
 
-  // Subtle kick lift on bass bars & snare sparkle on high-mid bars
-  float kickBoost = kickHit * exp(-barNorm * 4.0) * 0.065;
-  float snareBoost = snareHit * exp(-pow((barNorm - 0.62) * 3.8, 2.0)) * 0.045;
+  // Punchy bass & snare micro-kick + slight crisp per-bar energy grit
+  float kickBoost = kickHit * exp(-barNorm * 4.2) * 0.075;
+  float snareBoost = snareHit * exp(-pow((barNorm - 0.62) * 4.0, 2.0)) * 0.055;
 
-  float floorY = 0.015;
-  float barH = clamp(0.018 + fft * (0.60 + uEnergy * 0.08) + kickBoost + snareBoost, 0.018, 0.78);
-  float peakH = clamp(0.024 + peakFft * (0.60 + uEnergy * 0.08) + kickBoost * 0.6, barH + 0.012, 0.82);
+  float barH = clamp(0.016 + fft * (0.64 + uEnergy * 0.09) + kickBoost + snareBoost, 0.016, 0.84);
+  float peakH = clamp(0.022 + peakFft * (0.64 + uEnergy * 0.09) + kickBoost * 0.65, barH + 0.012, 0.88);
 
-  // Soft ambient vertical glow rising behind the active bars
-  float backGlow = exp(-max(uv.y - (floorY + barH * 0.85), 0.0) * 6.5) * (0.08 + fft * 0.26) * inBounds;
+  // Quantize bar height slightly to crisp hardware LED-brick rows for a raw, rough equalizer feel
+  float numRows = 54.0;
+  float segY = fract(uv.y * numRows);
+  float rowIdx = floor(uv.y * numRows);
+  float barTopRow = floor(barH * numRows);
+  float peakRow = floor(peakH * numRows);
+
+  // Subtle ambient backlight spill directly behind active columns
+  float backGlow = exp(-max(uv.y - barH * 0.85, 0.0) * 7.0) * (0.06 + fft * 0.22);
   col += mixCoverColor(primaryCol, accentCol, barNorm * 0.35) * backGlow;
 
-  // Rounded-top vertical bar geometry in aspect-accurate pixel space
-  float colWidthUv = (1.0 - padX * 2.0) / numBars;
-  float halfBarW = 0.35; // leaves crisp 30% dark gaps between bars
-  float barRadiusUvY = halfBarW * colWidthUv * aspect;
-  float capCenterY = max(floorY + barRadiusUvY, floorY + barH - barRadiusUvY);
+  // Sharp flat-edged bar column mask (wide solid columns with crisp dark vertical cuts)
+  float pxX = max(uResolution.x, 1.0);
+  float aaX = max(1.0 / (pxX / numBars), 0.015);
+  float colMask = smoothstep(0.42 + aaX, 0.42 - aaX, abs(barLocalX));
 
-  // Signed distance to rounded-top bar rising from floorY
-  vec2 barRel = vec2(barLocalX * colWidthUv * aspect, uv.y - capCenterY);
-  float distCap = length(vec2(barRel.x, max(barRel.y, 0.0))) - barRadiusUvY;
-  float distRectX = abs(barRel.x) - barRadiusUvY;
-  float dBar = (uv.y >= capCenterY) ? distCap : distRectX;
-  dBar = max(dBar, floorY - uv.y);
+  // Rough segmented horizontal LED brick mask (sharp notches slicing each bar)
+  float segMask = smoothstep(0.14, 0.24, segY) * smoothstep(0.98, 0.90, segY);
+  float inBar = step(rowIdx, barTopRow) * colMask * segMask;
 
-  float aa = max(1.3 / max(uResolution.y, 1.0), 0.0012);
-  float barMask = smoothstep(aa, -aa, dBar) * inBounds;
-
-  if (barMask > 0.001) {
-    float vFrac = clamp((uv.y - floorY) / max(barH, 0.001), 0.0, 1.0);
-    // Rich gradient: deep saturated base -> bright primary body -> glowing accent tip
-    vec3 baseCol = mix(deepTint, primaryCol, smoothstep(0.0, 0.45, vFrac));
-    vec3 barCol = mixCoverColor(baseCol, accentCol, pow(vFrac, 1.55) * 0.78);
-    // Subtle inner vertical center sheen so each bar looks crisp & sculptural
-    float centerSheen = 1.0 - pow(abs(barLocalX) / halfBarW, 2.0) * 0.22;
-    float lum = (0.48 + vFrac * 0.44 + fft * 0.32 + kickHit * 0.12) * centerSheen;
-    // Bright luminous top rim inside the rounded cap
-    float topHighlight = smoothstep(0.84, 1.0, vFrac) * (0.28 + fft * 0.48);
-    barCol = barCol * lum + capCol * topHighlight;
-    col = mix(col, barCol, barMask);
+  if (inBar > 0.001) {
+    float vFrac = clamp(uv.y / max(barH, 0.001), 0.0, 1.0);
+    // Subtle raw grain per brick so bars feel tactile and gritty rather than overly glossy
+    float brickGrit = 0.90 + 0.20 * hash21(vec2(barIdx * 1.3, rowIdx * 2.1));
+    vec3 baseCol = mix(deepTint, primaryCol, smoothstep(0.0, 0.40, vFrac));
+    vec3 barCol = mixCoverColor(baseCol, accentCol, pow(vFrac, 1.45) * 0.82);
+    float lum = (0.56 + vFrac * 0.46 + fft * 0.34 + kickHit * 0.14) * brickGrit;
+    // Extra hot top active brick
+    float isTopBrick = step(barTopRow - 0.5, rowIdx);
+    barCol = barCol * lum + capCol * isTopBrick * (0.28 + fft * 0.45);
+    col = mix(col, barCol, inBar);
   }
 
-  // Crisp glowing halo hugging the top of active bars
-  float topGlow = exp(-length(vec2(barRel.x * 1.4, (uv.y - (floorY + barH)) * 1.2)) * 28.0) *
-                  (0.14 + fft * 0.42) * inBounds;
-  col += accentCol * topGlow;
+  // Sharp flat rectangular gravity peak-hold cap hovering cleanly above each column
+  float isPeakBrick = step(abs(rowIdx - peakRow), 0.25) * step(2.0, peakRow);
+  float peakMask = isPeakBrick * colMask * segMask;
+  float peakGlow = exp(-abs(uv.y - (peakRow + 0.5) / numRows) * 90.0) * colMask * step(2.0, peakRow);
+  col += capCol * (peakMask * 0.95 + peakGlow * 0.26);
 
-  // Classic floating gravity peak-hold cap hovering cleanly above each bar
-  float peakY = floorY + peakH;
-  float capThickness = max(0.0038, 2.4 / max(uResolution.y, 1.0));
-  vec2 capRel = vec2(max(abs(barLocalX) - (halfBarW - 0.06), 0.0) * colWidthUv * aspect, uv.y - peakY);
-  float dPeakCap = length(capRel) - capThickness * 0.75;
-  float peakMask = smoothstep(aa, -aa, dPeakCap) * inBounds * smoothstep(0.026, 0.055, peakH);
-  float peakHalo = exp(-max(dPeakCap, 0.0) * 95.0) * smoothstep(0.026, 0.055, peakH) * inBounds;
-  col += capCol * (peakMask * 0.95 + peakHalo * 0.34);
-
-  // Crisp subtle floor baseline & perimeter kick breath
-  float floorLine = exp(-abs(uv.y - floorY) * 260.0) * (0.22 + uEnergy * 0.28 + kickHit * 0.25);
-  col += mixCoverColor(primaryCol, accentCol, 0.35) * floorLine;
-  col += primaryCol * smoothstep(0.75, 1.0, 1.0 - uv.y) * (kickHit * 0.14 + bassPower * 0.08);
+  // Subtle perimeter kick breath for LED backlights
+  col += primaryCol * smoothstep(0.78, 1.0, 1.0 - uv.y) * (kickHit * 0.14 + bassPower * 0.08);
 
   fragColor = vec4(finalizeLedColor(col), 1.0);
 }
@@ -830,9 +847,9 @@ void main() {
   vec3 col = (uBackdrop * 0.72 + deepTint * (0.04 + uEnergy * 0.04) * bgScale) * vignette;
 
   // Real Oscilloscope Coordinate System:
-  // X-axis (Time) lowered neatly to y = 0.36; Y-axis (Voltage/Amplitude) centered at x = 0.50
+  // X-axis (Time) & Y-axis (Voltage/Amplitude) centered cleanly at (0.50, 0.50)
   float axisX = 0.50;
-  float axisY = 0.36;
+  float axisY = 0.50;
   float pxX = max(uResolution.x, 1.0);
   float pxY = max(uResolution.y, 1.0);
 
@@ -916,46 +933,262 @@ void main() {
 }
 `;
 
+/**
+ * 6. FERROLIQUID — Fast 3D Glossy Magnetic Ferrofluid Orb
+ * Mirror-wet obsidian magnetic liquid metal orb that erupts into gleaming Rosensweig
+ * spikes on bass & kick drums with smooth-unioned orbiting droplets and album-colored
+ * studio softbox reflections. Uses tight bounding-sphere early-out for locked 60 FPS.
+ */
+const FERROLIQUID_FRAG = `${COMMON_HEADER}
+mat2 rot2d(float a) {
+  float c = cos(a);
+  float s = sin(a);
+  return mat2(c, -s, s, c);
+}
+
+float sminFerro(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+// Fast magnetic ferrofluid orb + Rosensweig conical spikes + 3 orbiting droplets
+vec2 ferroMap(
+  vec3 pos,
+  float rotY,
+  float rotX,
+  float phase,
+  float bassPower,
+  float kickHit,
+  float vocal,
+  float treble
+) {
+  vec3 q = pos;
+  q.xz = rot2d(rotY) * q.xz;
+  q.yz = rot2d(rotX) * q.yz;
+
+  float r = length(q);
+  vec3 dir = q / max(r, 1e-4);
+
+  // Seamless 3D spherical FFT coordinate (zero atan branch cut -> zero surface seam!)
+  float freqCoord = clamp(0.06 + (dir.y * 0.5 + 0.5) * 0.48 + (dir.x * 0.5 + 0.5) * 0.24 + abs(dir.z) * 0.10, 0.02, 0.88);
+  float bandFft = sampleFFT(freqCoord);
+
+  // Primary uniform Rosensweig conical magnetic spikes (clamped cleanly to [0, 1] -> zero freak horn clipping!)
+  float f1 = cos(dir.x * 6.8 + phase * 0.55) * cos(dir.y * 6.8 - phase * 0.42) * cos(dir.z * 6.8 + phase * 0.35);
+  float f2 = sin((dir.x + dir.y) * 5.2 - phase * 0.48) * sin((dir.y - dir.z) * 5.2 + phase * 0.38) * cos((dir.z + dir.x) * 5.2);
+  float spikeField = clamp((f1 * 0.58 + f2 * 0.42) * 0.5 + 0.5, 0.0, 1.0);
+  float primarySpikes = pow(spikeField, 3.6);
+
+  // Secondary finer high-frequency magnetic crown spikes on vocals & treble
+  float f3 = cos(dir.x * 11.4 - phase * 0.85) * cos(dir.y * 11.4 + phase * 0.65) * sin(dir.z * 11.4);
+  float fineSpikes = pow(clamp(abs(f3), 0.0, 1.0), 3.4);
+
+  // Calm smooth liquid black orb when quiet -> sharp gleaming Rosensweig spikes on bass & kicks!
+  float liquidSwell = sin(dir.x * 3.0 + phase) * cos(dir.y * 3.0 - phase * 0.8) * 0.020;
+  float spikeStrength = 0.026 + bassPower * 0.160 + kickHit * 0.140 + bandFft * 0.072;
+  float fineStrength = 0.008 + vocal * 0.052 + treble * 0.052;
+  float disp = liquidSwell + primarySpikes * spikeStrength + fineSpikes * fineStrength;
+
+  float coreR = 0.45 + uSubBass * 0.032 + kickHit * 0.032;
+  float dOrb = (r - (coreR + disp)) * 0.46;
+
+  // 3 orbiting magnetic ferrofluid droplets that stretch out & merge seamlessly on bass drops!
+  float orbitPull = 0.49 + bassPower * 0.14 + kickHit * 0.10;
+  vec3 drop1Pos = vec3(cos(phase * 1.15) * orbitPull, sin(phase * 1.75) * 0.30, sin(phase * 1.15) * orbitPull * 0.85);
+  vec3 drop2Pos = vec3(cos(phase * 0.92 + 2.1) * (orbitPull * 0.95), cos(phase * 1.45 + 1.0) * 0.35, sin(phase * 0.92 + 2.1) * orbitPull);
+  vec3 drop3Pos = vec3(sin(phase * 1.35 + 4.2) * 0.42, sin(phase * 0.85 + 2.6) * (orbitPull * 0.88), cos(phase * 1.35 + 4.2) * 0.44);
+
+  float dDrop = length(pos - drop1Pos) - (0.082 + kickHit * 0.022);
+  dDrop = min(dDrop, length(pos - drop2Pos) - (0.072 + vocal * 0.018));
+  dDrop = min(dDrop, length(pos - drop3Pos) - (0.064 + treble * 0.016));
+
+  float dTotal = sminFerro(dOrb, dDrop, 0.16);
+  float tipIntensity = clamp(primarySpikes * (0.45 + bassPower * 0.8 + kickHit * 0.7) + fineSpikes * treble, 0.0, 1.0);
+  return vec2(dTotal, tipIntensity);
+}
+
+vec3 calcFerroNormal(
+  vec3 pos,
+  float rotY,
+  float rotX,
+  float phase,
+  float bassPower,
+  float kickHit,
+  float vocal,
+  float treble
+) {
+  const vec2 e = vec2(0.0028, -0.0028);
+  return normalize(
+    e.xyy * ferroMap(pos + e.xyy, rotY, rotX, phase, bassPower, kickHit, vocal, treble).x +
+    e.yyx * ferroMap(pos + e.yyx, rotY, rotX, phase, bassPower, kickHit, vocal, treble).x +
+    e.yxy * ferroMap(pos + e.yxy, rotY, rotX, phase, bassPower, kickHit, vocal, treble).x +
+    e.xxx * ferroMap(pos + e.xxx, rotY, rotX, phase, bassPower, kickHit, vocal, treble).x
+  );
+}
+
+void main() {
+  vec2 uv = vUv;
+  float aspect = uResolution.x / max(uResolution.y, 1.0);
+  float fitScale = min(aspect, 1.0);
+  vec2 q = ((uv - 0.5) * vec2(aspect, 1.0)) / max(fitScale, 0.38);
+  float screenR = length(q);
+
+  vec3 primaryCol = getPrimaryColor();
+  vec3 accentCol = getAccentColor();
+  vec3 deepTint = preserveShade(primaryCol, -0.02, 0.44);
+  vec3 specWhite = mix(primaryCol, vec3(1.0), 0.58);
+  vec3 accentHot = mix(accentCol, vec3(1.0), 0.40);
+
+  float punch = clamp(uPulse, 0.55, 1.35);
+  float kickHit = clamp(uKick * punch, 0.0, 1.0);
+  float snareHit = clamp(uSnare * punch, 0.0, 0.95);
+  float bassPower = clamp(uBass * 0.85 + uSubBass * 0.45, 0.0, 1.2);
+
+  // Sleek dark studio stage + backlit aura radiating behind the floating ferrofluid orb
+  float bgScale = mix(1.0, 0.16, uDarkStage);
+  vec3 col = uBackdrop * 0.58 + deepTint * (0.05 + uEnergy * 0.06) * bgScale;
+  float backHalo = exp(-screenR * screenR * (4.4 - bassPower * 0.7)) * (0.28 + bassPower * 0.36 + kickHit * 0.34);
+  float rimAura = exp(-abs(screenR - (0.29 + kickHit * 0.035)) * 10.5) * (0.14 + uVocal * 0.24 + snareHit * 0.28);
+  col += primaryCol * backHalo + accentCol * rimAura;
+
+  // Camera & tight bounding-sphere ray intersection (skips ~70% of screen pixels with 0 march steps!)
+  vec3 ro = vec3(0.0, 0.0, 2.95);
+  vec3 rd = normalize(vec3(q, -1.78));
+  float boundR = 1.24;
+  float b = dot(ro, rd);
+  float c = dot(ro, ro) - boundR * boundR;
+  float disc = b * b - c;
+
+  if (disc >= 0.0) {
+    float sqrtDisc = sqrt(disc);
+    float t = max(0.0, -b - sqrtDisc);
+    float tMax = -b + sqrtDisc;
+
+    float rotY = uTime * 0.26 + uFlowTime * 0.32;
+    float rotX = sin(uTime * 0.22 + uFlowTime * 0.18) * 0.38;
+    float phase = uTime * 0.55 + uFlowTime * 0.78;
+
+    float hitT = -1.0;
+    float hitTip = 0.0;
+
+    // 42-step sphere march inside tight bounding volume -> razor-sharp spikes, zero clipping!
+    for (int i = 0; i < 42; i++) {
+      vec3 pos = ro + rd * t;
+      vec2 res = ferroMap(pos, rotY, rotX, phase, bassPower, kickHit, uVocal, uTreble);
+      if (res.x < 0.0025) {
+        hitT = t;
+        hitTip = res.y;
+        break;
+      }
+      t += res.x;
+      if (t > tMax) break;
+    }
+
+    if (hitT > 0.0) {
+      vec3 hitPos = ro + rd * hitT;
+      vec3 n = calcFerroNormal(hitPos, rotY, rotX, phase, bassPower, kickHit, uVocal, uTreble);
+      vec3 v = -rd;
+      vec3 refl = reflect(rd, n);
+
+      float ndv = max(dot(n, v), 0.0);
+      float fresnel = pow(1.0 - ndv, 3.8);
+
+      // Pure mirror-wet obsidian liquid-metal ferrofluid base
+      vec3 ferroCol = vec3(0.010, 0.011, 0.015) + uBackdrop * 0.08;
+
+      // Dual studio softbox strip reflections tinted faithfully in the album's colors
+      vec3 keyDir = normalize(vec3(-0.62, 0.72, 0.55));
+      vec3 fillDir = normalize(vec3(0.75, -0.35, 0.52));
+      vec3 rimDir = normalize(vec3(0.05, 0.88, -0.45));
+
+      float specKey = pow(max(dot(refl, keyDir), 0.0), 28.0);
+      float specKeyBroad = pow(max(dot(refl, keyDir), 0.0), 6.0);
+      float specFill = pow(max(dot(refl, fillDir), 0.0), 18.0);
+      float specRim = pow(max(dot(refl, rimDir), 0.0), 12.0);
+
+      // Synthetic glossy curved studio environment horizon bands
+      float envBand1 = smoothstep(0.15, 0.85, refl.y * 0.5 + 0.5) * pow(max(0.0, 1.0 - abs(refl.x + 0.25)), 2.2);
+      float envBand2 = smoothstep(-0.2, 0.65, -refl.y * 0.5 + 0.4) * pow(max(0.0, 1.0 - abs(refl.x - 0.35)), 2.4);
+
+      ferroCol += primaryCol * (specKeyBroad * (0.42 + bassPower * 0.35) + envBand1 * 0.24);
+      ferroCol += specWhite * specKey * (0.95 + kickHit * 0.55);
+      ferroCol += accentCol * (specFill * (0.68 + uVocal * 0.45 + snareHit * 0.50) + envBand2 * 0.26);
+      ferroCol += accentHot * specRim * (0.45 + uTreble * 0.45 + uHiHat * 0.45);
+
+      // Razor-sharp wet liquid-metal Fresnel silhouette outline wrapping every magnetic spike!
+      vec3 rimCol = mixCoverColor(primaryCol, accentHot, 0.42 + snareHit * 0.38);
+      ferroCol += rimCol * fresnel * (0.92 + bassPower * 0.48 + kickHit * 0.52);
+
+      // Glistening wet specular glints along the sharpest active magnetic spike tips
+      ferroCol += mix(primaryCol, vec3(1.0), 0.55) * hitTip * (0.12 + fresnel * 0.55) * (0.35 + uTreble * 0.65 + uHiHat * 0.55);
+
+      // Crisp soft anti-aliased edge blend at grazing silhouette
+      float edgeSoft = smoothstep(0.0, 0.14, ndv);
+      col = mix(col + rimCol * 0.42, ferroCol, clamp(edgeSoft * 1.15, 0.0, 1.0));
+    }
+  }
+
+  // Subtle perimeter kick glow for ambient LED backlights
+  col += primaryCol * smoothstep(0.55, 1.15, screenR) * (kickHit * 0.12 + bassPower * 0.06) * mix(1.0, 0.55, uDarkStage);
+
+  fragColor = vec4(finalizeLedColor(col), 1.0);
+}
+`;
+
 export const SHADER_PRESETS: ShaderPresetMeta[] = [
   {
-    id: 'soft-cloud',
-    name: 'Soft Cloud',
+    id: 'liquid',
+    name: 'Liquid',
     key: '1',
-    tagline: 'Dreamy liquid-motion clouds with calm, velvety audio breathing',
-    fragmentSource: SOFT_CLOUD_FRAG,
+    tagline: 'Real GPU fluid simulation with music-synced album-color swoops',
+    fragmentSource: LIQUID_FRAG,
+  },
+  {
+    id: 'wave',
+    name: 'Wave',
+    key: '2',
+    tagline: 'Layered flowing ocean & acoustic ribbon waves pulsing to the beat',
+    fragmentSource: WAVE_FRAG,
   },
   {
     id: 'cloud',
     name: 'Cloud',
-    key: '2',
-    tagline: 'Sculpted fluffy cumulus clouds that puff, swell & glow with the music',
+    key: '3',
+    tagline: 'Clean drifting sky filled with fluffy audio-reactive cumulus clouds',
     fragmentSource: CLOUD_FRAG,
   },
   {
     id: 'bars',
     name: 'Bars',
-    key: '3',
-    tagline: 'Bottom-up vertical spectrum bars with falling peak-hold caps',
+    key: '4',
+    tagline: 'Rough edge-to-edge bottom-up segmented spectrum bars with falling peak caps',
     fragmentSource: BARS_FRAG,
   },
   {
     id: 'vinyl',
     name: 'Vinyl',
-    key: '4',
+    key: '5',
     tagline: 'Spinning 12" vinyl with live album label, spectrum grooves & reactive stylus',
     fragmentSource: VINYL_FRAG,
   },
   {
     id: 'oscilloscope',
     name: 'Oscilloscope',
-    key: '5',
-    tagline: 'Real center-triggered single-line oscilloscope with X & Y axes',
+    key: '6',
+    tagline: 'Centered real single-line oscilloscope with X & Y axes',
     fragmentSource: OSCILLOSCOPE_FRAG,
+  },
+  {
+    id: 'ferroliquid',
+    name: 'Ferroliquid',
+    key: '7',
+    tagline: '3D glossy magnetic ferrofluid orb spiking dynamically to bass & beats',
+    fragmentSource: FERROLIQUID_FRAG,
   },
   {
     id: 'blank',
     name: 'Blank',
-    key: '6',
+    key: '8',
     tagline: 'Clean solid-color background with zero motion',
     fragmentSource: '',
   },

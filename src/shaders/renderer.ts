@@ -2,6 +2,7 @@ import type { ShaderPresetId, ThemePalette } from '@shared/types';
 import type { AudioFrame } from '@/audio/audioEngine';
 import { DEFAULT_PALETTE, lerpPalette } from '@/lib/palette';
 import { AUDIO_TEX_WIDTH } from '@/audio/dsp';
+import { FluidSimulator } from './fluidSim';
 import { SHADER_PRESETS, VERTEX_SHADER } from './presets';
 
 interface CompiledProgram {
@@ -49,9 +50,10 @@ export class ShaderRenderer {
   private albumArtTex: WebGLTexture | null = null;
   private hasAlbumArt = false;
   private artLoadGen = 0;
+  private fluidSim: FluidSimulator | null = null;
   private programs = new Map<ShaderPresetId, CompiledProgram>();
 
-  private activePreset: ShaderPresetId = 'soft-cloud';
+  private activePreset: ShaderPresetId = 'liquid';
   private pendingPreset: ShaderPresetId | null = null;
   private fade = 1.0;
 
@@ -82,7 +84,11 @@ export class ShaderRenderer {
   }
 
   public setPreset(preset: ShaderPresetId, immediate = false): void {
-    if (preset !== 'blank' && !this.programs.has(preset)) return;
+    const canRun =
+      preset === 'blank' ||
+      (preset === 'liquid' && this.fluidSim?.isSupported()) ||
+      this.programs.has(preset);
+    if (!canRun) return;
     if (immediate) {
       this.activePreset = preset;
       this.pendingPreset = null;
@@ -144,7 +150,7 @@ export class ShaderRenderer {
 
   public resize(): void {
     if (!this.gl) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
     const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
     if (this.canvas.width !== width || this.canvas.height !== height) {
@@ -204,6 +210,8 @@ export class ShaderRenderer {
 
     // Blank mode: pure crisp solid color with zero shader movement & ~0% GPU usage
     if (this.activePreset === 'blank') {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.canvas.width, this.canvas.height);
       gl.clearColor(
         this.currentBlankColor.r * this.fade,
         this.currentBlankColor.g * this.fade,
@@ -214,8 +222,25 @@ export class ShaderRenderer {
       return;
     }
 
+    // Liquid mode: real lightweight GPU 2D Navier-Stokes fluid simulation
+    if (this.activePreset === 'liquid' && this.fluidSim?.isSupported()) {
+      this.fluidSim.render(
+        dt,
+        this.canvas.width,
+        this.canvas.height,
+        audio,
+        this.currentPalette,
+        this.colorCycle,
+        this.fade
+      );
+      return;
+    }
+
     const compiled = this.programs.get(this.activePreset);
     if (!compiled) return;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.audioTex);
@@ -278,6 +303,10 @@ export class ShaderRenderer {
     const gl = this.gl;
     if (!gl) return;
     this.artLoadGen++;
+    if (this.fluidSim) {
+      this.fluidSim.dispose();
+      this.fluidSim = null;
+    }
     for (const { program } of this.programs.values()) {
       gl.deleteProgram(program);
     }
@@ -308,6 +337,9 @@ export class ShaderRenderer {
 
     this.gl = gl;
     this.vao = gl.createVertexArray();
+    if (this.vao) {
+      this.fluidSim = new FluidSimulator(gl, this.vao);
+    }
 
     // Audio FFT + waveform data texture (unit 0)
     const tex = gl.createTexture();

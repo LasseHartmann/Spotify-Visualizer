@@ -11,13 +11,15 @@ A full-screen desktop & web visualizer that pairs real-time **audio-reactive Web
 
 ## Features
 
-* **5 Music-Reactive WebGL2 Styles + Blank Mode (`1`–`6`):**
-  1. **Soft Cloud** — Dreamy liquid-motion clouds that swirl & flow gently like silk with calm audio breathing
-  2. **Cloud** — Sculpted fluffy cumulus clouds drifting across a starry twilight sky, swelling with bass/frequency bands & glowing internally on kicks
-  3. **Bars** — Bottom-up vertical audio spectrum bars (`bass → treble`) with falling hardware-EQ peak-hold caps
-  4. **Vinyl** — Spinning 12" vinyl record with real album cover label, live spectrum micro-grooves, kick shockwaves & reactive stylus
-  5. **Oscilloscope** — Authentic single-line center-triggered lab oscilloscope with crisp X & Y axes
-  6. **Blank** — Clean solid-color background with zero shader motion (great for pure lyrics focus)
+* **7 Music-Reactive WebGL2 Styles + Blank Mode (`1`–`8`):**
+  1. **Liquid** — Real GPU Navier-Stokes fluid simulation with music-synced album-color swoops & curling vortices
+  2. **Wave** — Layered flowing ocean & acoustic ribbon waves driven by live FFT spectrum, vocal counter-waves, and expanding kick crests
+  3. **Cloud** — Fast, clean sky filled with fluffy drifting cumulus clouds that swell and brighten with the beat
+  4. **Bars** — Edge-to-edge raw segmented bottom-up vertical audio spectrum bars (`bass → treble`) with falling peak-hold caps
+  5. **Vinyl** — Spinning 12" vinyl record with real album cover label, live spectrum micro-grooves, kick shockwaves & reactive stylus
+  6. **Oscilloscope** — Centered single-line lab oscilloscope with real X & Y axes and center-origin rising-edge trigger
+  7. **Ferroliquid** — Floating 3D glossy black magnetic ferrofluid orb erupting into spikes on bass & kicks with orbiting droplets
+  8. **Blank** — Clean solid-color background with zero shader motion (great for pure lyrics focus)
 * **True Album Cover Colors + Custom Background Color Picker (`C`):** Preserves real jet-black negative space, neutral white/silver, warm gold, and chromatic accents without injecting fake blue/green tints onto dark or black-and-white covers. Choose **Album Cycle**, **Album Lock**, or pick any **Custom Color** (quick swatches, color wheel, or `#HEX` input—with automatic dark-ink contrast on light Blank backgrounds).
 * **Native Windows WASAPI Audio Loopback:** Uses a lightweight bundled Windows Core Audio helper (`wasapi-tap.exe`) so real-time audio reactivity works out of the box across stereo speakers, Bluetooth, Dolby Atmos, and **5.1 / 7.1 surround gaming headsets**—with zero screen-capture border and automatic device switching.
 * **Adaptive Auto-Gain & Self-Regulating Pulse:** Automatically normalizes volume levels and adjusts beat pulse intensity from chill acoustic songs to heavy drops.
@@ -77,7 +79,7 @@ The repository includes a preconfigured `vercel.json` for one-click deployment:
 | --- | --- |
 | `Space` | Play / Pause music |
 | `←` / `→` | Previous / Next track |
-| `1` – `6` | Switch background style (`Soft Cloud`, `Cloud`, `Bars`, `Vinyl`, `Oscilloscope`, `Blank`) |
+| `1` – `8` | Switch background style (`Liquid`, `Wave`, `Cloud`, `Bars`, `Vinyl`, `Oscilloscope`, `Ferroliquid`, `Blank`) |
 | `L` | Cycle letter-by-letter sweep (`Auto` / `All` / `Off`) |
 | `V` | Show / hide album cover showcase |
 | `C` | Cycle color mode (**Album Cycle** / **Album Lock** / **Custom**) |

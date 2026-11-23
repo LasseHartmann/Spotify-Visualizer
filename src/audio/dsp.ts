@@ -403,7 +403,7 @@ export class AudioDsp {
       const fftVal = hasSignal
         ? clamp(Math.round((freqBins[logIdx] / 255) * gain * sens * 255), 0, 255)
         : 0;
-      const fftSmooth = Math.round(f.textureData[x] * 0.52 + fftVal * 0.48);
+      const fftSmooth = Math.round(f.textureData[x] * 0.32 + fftVal * 0.68);
       f.textureData[x] = fftSmooth;
 
       // Gravity-falling peak-hold cap per bin (row 2)

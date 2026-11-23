@@ -51,22 +51,24 @@ const SWEEP_MODE_CYCLE: SweepMode[] = ['auto', 'always', 'off'];
 function loadSavedPreset(): ShaderPresetId {
   const saved = localStorage.getItem('sv:preset:v3');
   if (
-    saved === 'soft-cloud' ||
+    saved === 'liquid' ||
+    saved === 'wave' ||
     saved === 'cloud' ||
     saved === 'bars' ||
     saved === 'vinyl' ||
     saved === 'oscilloscope' ||
+    saved === 'ferroliquid' ||
     saved === 'blank'
   ) {
     return saved;
   }
-  if (saved === 'wave') return 'bars';
+  if (saved === 'soft-cloud') return 'liquid';
   const legacy = localStorage.getItem('sv:preset:v2');
   if (legacy === 'blank') return 'blank';
-  if (legacy === 'tide') return 'bars';
+  if (legacy === 'tide') return 'wave';
   if (legacy === 'eclipse') return 'vinyl';
   if (legacy === 'spectrum') return 'oscilloscope';
-  return 'soft-cloud';
+  return 'liquid';
 }
 
 function loadSavedLayout(): LyricsLayoutMode {
@@ -720,26 +722,34 @@ export function App() {
           revealHud();
           break;
         case '1':
-          selectPreset('soft-cloud');
+          selectPreset('liquid');
           revealHud();
           break;
         case '2':
-          selectPreset('cloud');
+          selectPreset('wave');
           revealHud();
           break;
         case '3':
-          selectPreset('bars');
+          selectPreset('cloud');
           revealHud();
           break;
         case '4':
-          selectPreset('vinyl');
+          selectPreset('bars');
           revealHud();
           break;
         case '5':
-          selectPreset('oscilloscope');
+          selectPreset('vinyl');
           revealHud();
           break;
         case '6':
+          selectPreset('oscilloscope');
+          revealHud();
+          break;
+        case '7':
+          selectPreset('ferroliquid');
+          revealHud();
+          break;
+        case '8':
           selectPreset('blank');
           revealHud();
           break;
